@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "es6",
+    "module": "commonjs",
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "strict": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "moduleResolution": "node",
+    "jsx": "react", // ✅ Enables JSX in .tsx files
+    "typeRoots": ["./types", "./node_modules/@types"],
+    "types": ["node", "react", "react-dom"] // ✅ Ensure React types are loaded
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules"]
+}

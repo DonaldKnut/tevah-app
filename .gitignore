@@ -1,0 +1,11 @@
+# .gitignore
+.env
+.env.*
+*.env
+config/*.json  # if you keep keys there
+
+.DS_Store
+dist/.DS_Store
+node_modules/.DS_Store
+node_modules/react-native/.DS_Store
+node_modules
