@@ -19,8 +19,8 @@ import {
   resendVerificationEmail,
   resetPassword,
   verifyEmail,
+  login,
 } from "../controllers/auth.controller";
-
 const router = Router();
 
 router.post("/clerk-login", clerkLogin);
@@ -31,5 +31,6 @@ router.post("/resend-verification-email", resendVerificationEmail);
 router.post("/complete-profile", verifyToken, completeUserProfile);
 router.get("/me", verifyToken, getCurrentUser);
 router.get("/session", verifyToken, getSession);
+router.post("/login", login);
 
 export default router;

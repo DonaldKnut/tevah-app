@@ -1,9 +1,16 @@
 import { Request, Response, NextFunction } from "express";
 import bcrypt from "bcrypt";
 import crypto from "crypto";
+import jwt from "jsonwebtoken";
 import { sendVerificationEmail, sendWelcomeEmail } from "../utils/mailer";
 import { User } from "../models/user.model";
 import { verifyClerkToken } from "../utils/clerk";
+
+// Get JWT_SECRET from environment
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  throw new Error("Missing JWT_SECRET in environment variables");
+}
 
 export const clerkLogin = async (
   req: Request,
@@ -29,8 +36,8 @@ export const clerkLogin = async (
     if (!user) {
       user = await User.create({
         email,
-        firstName: userInfo.firstName || "User", // Updated
-        lastName: userInfo.lastName || "", // Updated
+        firstName: userInfo.firstName || "User",
+        lastName: userInfo.lastName || "",
         avatar: userInfo.avatar || "",
         provider: "clerk",
         clerkId: decoded.sub,
@@ -43,7 +50,7 @@ export const clerkLogin = async (
         hasConsentedToPrivacyPolicy: false,
       });
 
-      await sendWelcomeEmail(user.email, user.firstName || "User"); // Updated
+      await sendWelcomeEmail(user.email, user.firstName || "User");
     }
 
     res.status(200).json({
@@ -51,8 +58,8 @@ export const clerkLogin = async (
       user: {
         id: user._id,
         email: user.email,
-        firstName: user.firstName, // Updated
-        lastName: user.lastName, // Updated
+        firstName: user.firstName,
+        lastName: user.lastName,
         avatar: user.avatar,
         isNewUser,
       },
@@ -69,7 +76,7 @@ export const register = async (
   next: NextFunction
 ) => {
   try {
-    const { email, password, firstName, lastName } = req.body; // Updated
+    const { email, password, firstName, lastName } = req.body;
 
     if (!email || !password || !firstName) {
       res.status(400).json({
@@ -92,13 +99,12 @@ export const register = async (
       .toString("hex")
       .toUpperCase();
     const verificationCodeExpires = new Date(Date.now() + 10 * 60 * 1000);
-
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const user = await User.create({
       email,
-      firstName, // Updated
-      lastName, // Updated
+      firstName,
+      lastName,
       provider: "email",
       password: hashedPassword,
       verificationCode,
@@ -112,7 +118,7 @@ export const register = async (
       hasConsentedToPrivacyPolicy: false,
     });
 
-    await sendVerificationEmail(user.email, user.firstName, verificationCode); // Updated
+    await sendVerificationEmail(user.email, user.firstName, verificationCode);
 
     res.status(201).json({
       success: true,
@@ -120,8 +126,64 @@ export const register = async (
       user: {
         id: user._id,
         email: user.email,
-        firstName: user.firstName, // Updated
-        lastName: user.lastName, // Updated
+        firstName: user.firstName,
+        lastName: user.lastName,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const login = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      res
+        .status(400)
+        .json({ success: false, message: "Missing email or password" });
+      return;
+    }
+
+    const user = await User.findOne({ email, provider: "email" });
+    if (!user || !(await bcrypt.compare(password, user.password || ""))) {
+      res
+        .status(400)
+        .json({ success: false, message: "Invalid email or password" });
+      return;
+    }
+
+    if (!user.isEmailVerified) {
+      res
+        .status(403)
+        .json({
+          success: false,
+          message: "Please verify your email before logging in",
+        });
+      return;
+    }
+
+    const token = jwt.sign({ userId: user._id }, JWT_SECRET, {
+      expiresIn: "7d",
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "Login successful",
+      token,
+      user: {
+        id: user._id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        avatar: user.avatar,
+        role: user.role,
+        isProfileComplete: user.isProfileComplete,
       },
     });
   } catch (error) {
@@ -138,15 +200,16 @@ export const verifyEmail = async (
     const { email, code } = req.body;
 
     if (!email || !code) {
-      res.status(400).json({
-        success: false,
-        message: "Missing email or verification code",
-      });
+      res
+        .status(400)
+        .json({
+          success: false,
+          message: "Missing email or verification code",
+        });
       return;
     }
 
     const user = await User.findOne({ email, verificationCode: code });
-
     if (!user) {
       res
         .status(400)
@@ -166,7 +229,7 @@ export const verifyEmail = async (
     user.verificationCodeExpires = undefined;
     await user.save();
 
-    await sendWelcomeEmail(user.email, user.firstName || "User"); // Updated
+    await sendWelcomeEmail(user.email, user.firstName || "User");
 
     res.status(200).json({
       success: true,
@@ -174,8 +237,8 @@ export const verifyEmail = async (
       user: {
         id: user._id,
         email: user.email,
-        firstName: user.firstName, // Updated
-        lastName: user.lastName, // Updated
+        firstName: user.firstName,
+        lastName: user.lastName,
         isEmailVerified: user.isEmailVerified,
       },
     });
@@ -193,10 +256,12 @@ export const resetPassword = async (
     const { email, token, newPassword } = req.body;
 
     if (!email || !token || !newPassword) {
-      res.status(400).json({
-        success: false,
-        message: "Missing email, token, or new password",
-      });
+      res
+        .status(400)
+        .json({
+          success: false,
+          message: "Missing email, token, or new password",
+        });
       return;
     }
 
@@ -219,10 +284,9 @@ export const resetPassword = async (
     user.resetPasswordExpires = undefined;
     await user.save();
 
-    res.status(200).json({
-      success: true,
-      message: "Password reset successfully",
-    });
+    res
+      .status(200)
+      .json({ success: true, message: "Password reset successfully" });
   } catch (error) {
     next(error);
   }
@@ -269,12 +333,11 @@ export const resendVerificationEmail = async (
       user.email,
       user.firstName || "User",
       verificationCode
-    ); // Updated
+    );
 
-    res.status(200).json({
-      success: true,
-      message: "Verification email resent",
-    });
+    res
+      .status(200)
+      .json({ success: true, message: "Verification email resent" });
   } catch (error) {
     next(error);
   }
@@ -330,7 +393,7 @@ export const getCurrentUser = async (
   try {
     const userId = req.userId;
     const user = await User.findById(userId).select(
-      "email firstName lastName avatar isProfileComplete role section" // Updated
+      "email firstName lastName avatar isProfileComplete role section"
     );
 
     if (!user) {
@@ -352,7 +415,7 @@ export const getSession = async (
   try {
     const userId = req.userId;
     const user = await User.findById(userId).select(
-      "_id email firstName lastName isProfileComplete role" // Updated
+      "_id email firstName lastName isProfileComplete role"
     );
 
     if (!user) {
@@ -365,8 +428,8 @@ export const getSession = async (
       session: {
         userId: user._id,
         email: user.email,
-        firstName: user.firstName, // Updated
-        lastName: user.lastName, // Updated
+        firstName: user.firstName,
+        lastName: user.lastName,
         isProfileComplete: user.isProfileComplete,
         role: user.role,
       },
