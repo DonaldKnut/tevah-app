@@ -53,7 +53,7 @@ class AuthService {
         firstName: userInfo.firstName || "User",
         lastName: userInfo.lastName || "",
         avatar: userInfo.avatar || "",
-        provider: provider.toLowerCase(), // e.g., "google", "facebook", "apple"
+        provider: provider.toLowerCase(),
         clerkId: decoded.sub,
         isEmailVerified: true,
         isProfileComplete: false,
@@ -309,14 +309,19 @@ class AuthService {
     age: number,
     location: string | undefined,
     hasConsentedToPrivacyPolicy: boolean,
-    desiredRole?: string
+    desiredRole?: string,
+    interests?: string[],
+    section?: string
   ) {
     const currentUser = await User.findById(userId);
     if (!currentUser) {
       throw new Error("User not found");
     }
 
-    const section = age < 13 ? "kids" : "adults";
+    let userSection = section;
+    if (!userSection) {
+      userSection = age < 13 ? "kids" : "adults";
+    }
 
     let role = currentUser.role;
     if (currentUser.role === "learner" && desiredRole) {
@@ -336,20 +341,24 @@ class AuthService {
     const verificationFlags =
       role !== currentUser.role ? this.setVerificationFlags(role) : {};
 
-    const user = await User.findByIdAndUpdate(
-      userId,
-      {
-        age,
-        location,
-        section,
-        isKid: section === "kids",
-        role,
-        hasConsentedToPrivacyPolicy,
-        isProfileComplete: true,
-        ...verificationFlags,
-      },
-      { new: true }
-    );
+    const updateData: any = {
+      age,
+      location,
+      section: userSection,
+      isKid: userSection === "kids",
+      role,
+      hasConsentedToPrivacyPolicy,
+      isProfileComplete: true,
+      ...verificationFlags,
+    };
+
+    if (interests && Array.isArray(interests)) {
+      updateData.interests = interests;
+    }
+
+    const user = await User.findByIdAndUpdate(userId, updateData, {
+      new: true,
+    });
 
     if (!user) {
       throw new Error("User not found");
@@ -360,7 +369,7 @@ class AuthService {
 
   async getCurrentUser(userId: string) {
     const user = await User.findById(userId).select(
-      "email firstName lastName avatar isProfileComplete role section"
+      "email firstName lastName avatar isProfileComplete role section interests"
     );
 
     if (!user) {

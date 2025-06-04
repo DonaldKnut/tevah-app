@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import authService from "../service/auth.service";
+import { VALID_INTERESTS } from "../constants/interests";
 
 class AuthController {
   async clerkLogin(request: Request, response: Response, next: NextFunction) {
@@ -25,12 +26,12 @@ class AuthController {
     }
   }
 
-  async oauthLogin(req: Request, res: Response, next: NextFunction) {
+  async oauthLogin(request: Request, response: Response, next: NextFunction) {
     try {
-      const { provider, token, userInfo } = req.body;
+      const { provider, token, userInfo } = request.body;
 
       if (!provider || !token || !userInfo) {
-        return res.status(400).json({
+        return response.status(400).json({
           success: false,
           message: "Provider, token, and user information are required",
         });
@@ -38,16 +39,18 @@ class AuthController {
 
       const result = await authService.oauthLogin(provider, token, userInfo);
 
-      return res.status(200).json({
+      return response.status(200).json({
         success: true,
         message: "Login successful",
         token: result.token,
         user: result.user,
+        isNewUser: result.isNewUser,
       });
     } catch (error) {
       return next(error);
     }
   }
+
   async registerUser(request: Request, response: Response, next: NextFunction) {
     try {
       const { email, password, firstName, lastName, desiredRole } =
@@ -310,13 +313,47 @@ class AuthController {
         });
       }
 
-      const { age, location, hasConsentedToPrivacyPolicy, desiredRole } =
-        request.body;
+      const {
+        age,
+        location,
+        hasConsentedToPrivacyPolicy,
+        desiredRole,
+        interests,
+        section,
+      } = request.body;
 
-      if (!age || !hasConsentedToPrivacyPolicy) {
+      if (!age || !hasConsentedToPrivacyPolicy || !section) {
         return response.status(400).json({
           success: false,
-          message: "Age and privacy policy consent are required",
+          message: "Age, privacy policy consent, and section are required",
+        });
+      }
+
+      // Validate section
+      if (!["kids", "adults"].includes(section)) {
+        return response.status(400).json({
+          success: false,
+          message: "Invalid section. Must be 'kids' or 'adults'",
+        });
+      }
+
+      // Validate interests
+      if (interests && !Array.isArray(interests)) {
+        return response.status(400).json({
+          success: false,
+          message: "Interests must be an array",
+        });
+      }
+
+      if (
+        interests &&
+        interests.some(
+          (interest: string) => !VALID_INTERESTS.includes(interest)
+        )
+      ) {
+        return response.status(400).json({
+          success: false,
+          message: `Invalid interests. Must be one of: ${VALID_INTERESTS.join(", ")}`,
         });
       }
 
@@ -325,7 +362,9 @@ class AuthController {
         age,
         location,
         hasConsentedToPrivacyPolicy,
-        desiredRole
+        desiredRole,
+        interests,
+        section
       );
 
       return response.status(200).json({
@@ -336,6 +375,8 @@ class AuthController {
           firstName: user.firstName,
           lastName: user.lastName,
           role: user.role,
+          interests: user.interests,
+          section: user.section,
           isProfileComplete: user.isProfileComplete,
         },
       });
