@@ -1,36 +1,77 @@
 import { Router } from "express";
-// import {
-//   clerkLogin,
-//   completeUserProfile,
-//   getCurrentUser,
-//   getSession,
-//   register,
-//   verifyEmail,
-//   resetPassword,
-//   resendVerificationEmail,
-// } from "../controllers/auth.controller";
+import multer from "multer";
+import authController from "../controllers/auth.controller";
 import { verifyToken } from "../middleware/auth.middleware";
 import {
-  clerkLogin,
-  completeUserProfile,
-  getCurrentUser,
-  getSession,
-  register,
-  resendVerificationEmail,
-  resetPassword,
-  verifyEmail,
-  login,
-} from "../controllers/auth.controller";
-const router = Router();
+  authRateLimiter,
+  sensitiveEndpointRateLimiter,
+} from "../middleware/rateLimiter";
+import { asyncHandler } from "../utils/asyncHandler";
 
-router.post("/clerk-login", clerkLogin);
-router.post("/register", register);
-router.post("/verify-email", verifyEmail);
-router.post("/reset-password", resetPassword);
-router.post("/resend-verification-email", resendVerificationEmail);
-router.post("/complete-profile", verifyToken, completeUserProfile);
-router.get("/me", verifyToken, getCurrentUser);
-router.get("/session", verifyToken, getSession);
-router.post("/login", login);
+const router = Router();
+const upload = multer(); // In-memory file storage
+
+// Public Auth Routes
+router.post(
+  "/clerk-login",
+  authRateLimiter,
+  asyncHandler(authController.clerkLogin)
+);
+
+router.post(
+  "/oauth-login",
+  authRateLimiter,
+  asyncHandler(authController.oauthLogin)
+);
+
+router.post(
+  "/register",
+  authRateLimiter,
+  asyncHandler(authController.registerUser)
+);
+
+router.post("/login", authRateLimiter, asyncHandler(authController.loginUser));
+
+// Sensitive Public Routes
+router.post(
+  "/verify-email",
+  sensitiveEndpointRateLimiter,
+  asyncHandler(authController.verifyEmail)
+);
+
+router.post(
+  "/reset-password",
+  sensitiveEndpointRateLimiter,
+  asyncHandler(authController.resetPassword)
+);
+
+router.post(
+  "/resend-verification-email",
+  sensitiveEndpointRateLimiter,
+  asyncHandler(authController.resendVerificationEmail)
+);
+
+// Protected Routes
+router.post(
+  "/complete-profile",
+  verifyToken,
+  asyncHandler(authController.completeUserProfile)
+);
+
+router.get("/me", verifyToken, asyncHandler(authController.getCurrentUser));
+
+router.get(
+  "/session",
+  verifyToken,
+  asyncHandler(authController.getUserSession)
+);
+
+// Avatar Upload Endpoint
+router.post(
+  "/update-avatar",
+  verifyToken,
+  upload.single("avatar"),
+  asyncHandler(authController.updateUserAvatar)
+);
 
 export default router;

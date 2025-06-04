@@ -1,440 +1,493 @@
 import { Request, Response, NextFunction } from "express";
-import bcrypt from "bcrypt";
-import crypto from "crypto";
-import jwt from "jsonwebtoken";
-import { sendVerificationEmail, sendWelcomeEmail } from "../utils/mailer";
-import { User } from "../models/user.model";
-import { verifyClerkToken } from "../utils/clerk";
+import authService from "../service/auth.service";
 
-// Get JWT_SECRET from environment
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-  throw new Error("Missing JWT_SECRET in environment variables");
-}
+class AuthController {
+  async clerkLogin(request: Request, response: Response, next: NextFunction) {
+    try {
+      const { token, userInfo } = request.body;
 
-export const clerkLogin = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
-  try {
-    const { token, userInfo } = req.body;
+      if (!token || !userInfo) {
+        return response.status(400).json({
+          success: false,
+          message: "Authentication token and user information are required",
+        });
+      }
 
-    if (!token || !userInfo) {
-      res
-        .status(400)
-        .json({ success: false, message: "Missing token or user info" });
-      return;
+      const result = await authService.clerkLogin(token, userInfo);
+
+      return response.status(200).json({
+        success: true,
+        user: result.user,
+        needsAgeSelection: result.needsAgeSelection,
+      });
+    } catch (error) {
+      return next(error);
     }
+  }
 
-    const decoded = await verifyClerkToken(token);
-    const email = decoded.email;
+  async oauthLogin(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { provider, token, userInfo } = req.body;
 
-    let user = await User.findOne({ email });
-    const isNewUser = !user;
+      if (!provider || !token || !userInfo) {
+        return res.status(400).json({
+          success: false,
+          message: "Provider, token, and user information are required",
+        });
+      }
 
-    if (!user) {
-      user = await User.create({
+      const result = await authService.oauthLogin(provider, token, userInfo);
+
+      return res.status(200).json({
+        success: true,
+        message: "Login successful",
+        token: result.token,
+        user: result.user,
+      });
+    } catch (error) {
+      return next(error);
+    }
+  }
+  async registerUser(request: Request, response: Response, next: NextFunction) {
+    try {
+      const { email, password, firstName, lastName, desiredRole } =
+        request.body;
+
+      if (!email || !password || !firstName) {
+        return response.status(400).json({
+          success: false,
+          message: "Email, password, and first name are required fields",
+        });
+      }
+
+      const user = await authService.registerUser(
         email,
-        firstName: userInfo.firstName || "User",
-        lastName: userInfo.lastName || "",
-        avatar: userInfo.avatar || "",
-        provider: "clerk",
-        clerkId: decoded.sub,
-        isEmailVerified: true,
-        isProfileComplete: false,
-        age: 0,
-        isKid: false,
-        section: "adults",
-        role: "learner",
-        hasConsentedToPrivacyPolicy: false,
+        password,
+        firstName,
+        lastName,
+        desiredRole
+      );
+
+      return response.status(201).json({
+        success: true,
+        message: "User registered successfully. Please verify your email.",
+        user,
       });
-
-      await sendWelcomeEmail(user.email, user.firstName || "User");
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message === "Email address is already registered"
+      ) {
+        return response.status(400).json({
+          success: false,
+          message: error.message,
+        });
+      }
+      return next(error);
     }
-
-    res.status(200).json({
-      success: true,
-      user: {
-        id: user._id,
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        avatar: user.avatar,
-        isNewUser,
-      },
-      needsAgeSelection: !user.age,
-    });
-  } catch (error) {
-    next(error);
   }
-};
 
-export const register = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
-  try {
-    const { email, password, firstName, lastName } = req.body;
+  async registerUserWithAvatar(
+    request: Request,
+    response: Response,
+    next: NextFunction
+  ) {
+    try {
+      const { email, password, firstName, lastName, desiredRole } =
+        request.body;
+      const avatarFile = request.file;
 
-    if (!email || !password || !firstName) {
-      res.status(400).json({
-        success: false,
-        message: "Missing email, password, or firstName",
+      if (!email || !password || !firstName) {
+        return response.status(400).json({
+          success: false,
+          message: "Email, password, and first name are required fields",
+        });
+      }
+
+      if (!avatarFile) {
+        return response.status(400).json({
+          success: false,
+          message: "Avatar image is required",
+        });
+      }
+
+      const user = await authService.registerUser(
+        email,
+        password,
+        firstName,
+        lastName,
+        desiredRole,
+        avatarFile.buffer
+      );
+
+      return response.status(201).json({
+        success: true,
+        message: "User registered successfully. Please verify your email.",
+        user,
       });
-      return;
-    }
-
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
-      res
-        .status(400)
-        .json({ success: false, message: "Email already registered" });
-      return;
-    }
-
-    const verificationCode = crypto
-      .randomBytes(3)
-      .toString("hex")
-      .toUpperCase();
-    const verificationCodeExpires = new Date(Date.now() + 10 * 60 * 1000);
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    const user = await User.create({
-      email,
-      firstName,
-      lastName,
-      provider: "email",
-      password: hashedPassword,
-      verificationCode,
-      verificationCodeExpires,
-      isEmailVerified: false,
-      isProfileComplete: false,
-      age: 0,
-      isKid: false,
-      section: "adults",
-      role: "learner",
-      hasConsentedToPrivacyPolicy: false,
-    });
-
-    await sendVerificationEmail(user.email, user.firstName, verificationCode);
-
-    res.status(201).json({
-      success: true,
-      message: "User registered. Please verify your email.",
-      user: {
-        id: user._id,
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-      },
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const login = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
-  try {
-    const { email, password } = req.body;
-
-    if (!email || !password) {
-      res
-        .status(400)
-        .json({ success: false, message: "Missing email or password" });
-      return;
-    }
-
-    const user = await User.findOne({ email, provider: "email" });
-    if (!user || !(await bcrypt.compare(password, user.password || ""))) {
-      res
-        .status(400)
-        .json({ success: false, message: "Invalid email or password" });
-      return;
-    }
-
-    if (!user.isEmailVerified) {
-      res
-        .status(403)
-        .json({
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message === "Email address is already registered"
+      ) {
+        return response.status(400).json({
           success: false,
-          message: "Please verify your email before logging in",
+          message: error.message,
         });
-      return;
+      }
+      return next(error);
     }
-
-    const token = jwt.sign({ userId: user._id }, JWT_SECRET, {
-      expiresIn: "7d",
-    });
-
-    res.status(200).json({
-      success: true,
-      message: "Login successful",
-      token,
-      user: {
-        id: user._id,
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        avatar: user.avatar,
-        role: user.role,
-        isProfileComplete: user.isProfileComplete,
-      },
-    });
-  } catch (error) {
-    next(error);
   }
-};
 
-export const verifyEmail = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
-  try {
-    const { email, code } = req.body;
+  async loginUser(request: Request, response: Response, next: NextFunction) {
+    try {
+      const { email, password } = request.body;
 
-    if (!email || !code) {
-      res
-        .status(400)
-        .json({
+      if (!email || !password) {
+        return response.status(400).json({
           success: false,
-          message: "Missing email or verification code",
+          message: "Email and password are required",
         });
-      return;
+      }
+
+      const result = await authService.loginUser(email, password);
+
+      return response.status(200).json({
+        success: true,
+        message: "Login successful",
+        token: result.token,
+        user: result.user,
+      });
+    } catch (error) {
+      if (error instanceof Error) {
+        if (error.message === "Invalid email or password") {
+          return response.status(400).json({
+            success: false,
+            message: error.message,
+          });
+        }
+        if (error.message === "Please verify your email before logging in") {
+          return response.status(403).json({
+            success: false,
+            message: error.message,
+          });
+        }
+      }
+      return next(error);
     }
-
-    const user = await User.findOne({ email, verificationCode: code });
-    if (!user) {
-      res
-        .status(400)
-        .json({ success: false, message: "Invalid email or code" });
-      return;
-    }
-
-    if (user.verificationCodeExpires < new Date()) {
-      res
-        .status(400)
-        .json({ success: false, message: "Verification code expired" });
-      return;
-    }
-
-    user.isEmailVerified = true;
-    user.verificationCode = undefined;
-    user.verificationCodeExpires = undefined;
-    await user.save();
-
-    await sendWelcomeEmail(user.email, user.firstName || "User");
-
-    res.status(200).json({
-      success: true,
-      message: "Email verified successfully",
-      user: {
-        id: user._id,
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        isEmailVerified: user.isEmailVerified,
-      },
-    });
-  } catch (error) {
-    next(error);
   }
-};
 
-export const resetPassword = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
-  try {
-    const { email, token, newPassword } = req.body;
+  async verifyEmail(request: Request, response: Response, next: NextFunction) {
+    try {
+      const { email, code } = request.body;
 
-    if (!email || !token || !newPassword) {
-      res
-        .status(400)
-        .json({
+      if (!email || !code) {
+        return response.status(400).json({
           success: false,
-          message: "Missing email, token, or new password",
+          message: "Email and verification code are required",
         });
-      return;
+      }
+
+      const user = await authService.verifyEmail(email, code);
+
+      return response.status(200).json({
+        success: true,
+        message: "Email verified successfully",
+        user: {
+          id: user._id,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          isEmailVerified: user.isEmailVerified,
+          role: user.role,
+        },
+      });
+    } catch (error) {
+      if (error instanceof Error) {
+        if (error.message === "Invalid email or code") {
+          return response.status(400).json({
+            success: false,
+            message: error.message,
+          });
+        }
+        if (error.message === "Verification code expired") {
+          return response.status(400).json({
+            success: false,
+            message: error.message,
+          });
+        }
+      }
+      return next(error);
     }
-
-    const user = await User.findOne({
-      email,
-      resetPasswordToken: token,
-      resetPasswordExpires: { $gt: Date.now() },
-    });
-
-    if (!user) {
-      res
-        .status(400)
-        .json({ success: false, message: "Invalid or expired reset token" });
-      return;
-    }
-
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
-    user.password = hashedPassword;
-    user.resetPasswordToken = undefined;
-    user.resetPasswordExpires = undefined;
-    await user.save();
-
-    res
-      .status(200)
-      .json({ success: true, message: "Password reset successfully" });
-  } catch (error) {
-    next(error);
   }
-};
 
-export const resendVerificationEmail = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
-  try {
-    const { email } = req.body;
+  async resetPassword(
+    request: Request,
+    response: Response,
+    next: NextFunction
+  ) {
+    try {
+      const { email, token, newPassword } = request.body;
 
-    if (!email) {
-      res.status(400).json({ success: false, message: "Missing email" });
-      return;
+      if (!email || !token || !newPassword) {
+        return response.status(400).json({
+          success: false,
+          message: "Email, token, and new password are required",
+        });
+      }
+
+      await authService.resetPassword(email, token, newPassword);
+
+      return response.status(200).json({
+        success: true,
+        message: "Password reset successfully",
+      });
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message === "Invalid or expired reset token"
+      ) {
+        return response.status(400).json({
+          success: false,
+          message: error.message,
+        });
+      }
+      return next(error);
     }
-
-    const user = await User.findOne({ email, provider: "email" });
-
-    if (!user) {
-      res.status(404).json({ success: false, message: "User not found" });
-      return;
-    }
-
-    if (user.isEmailVerified) {
-      res
-        .status(400)
-        .json({ success: false, message: "Email already verified" });
-      return;
-    }
-
-    const verificationCode = crypto
-      .randomBytes(3)
-      .toString("hex")
-      .toUpperCase();
-    const verificationCodeExpires = new Date(Date.now() + 10 * 60 * 1000);
-
-    user.verificationCode = verificationCode;
-    user.verificationCodeExpires = verificationCodeExpires;
-    await user.save();
-
-    await sendVerificationEmail(
-      user.email,
-      user.firstName || "User",
-      verificationCode
-    );
-
-    res
-      .status(200)
-      .json({ success: true, message: "Verification email resent" });
-  } catch (error) {
-    next(error);
   }
-};
 
-export const completeUserProfile = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
-  try {
-    const userId = req.userId;
-    const { age, location, hasConsentedToPrivacyPolicy } = req.body;
+  async resendVerificationEmail(
+    request: Request,
+    response: Response,
+    next: NextFunction
+  ) {
+    try {
+      const { email } = request.body;
 
-    if (!age || !hasConsentedToPrivacyPolicy) {
-      res
-        .status(400)
-        .json({ success: false, message: "Missing age or privacy consent" });
-      return;
+      if (!email) {
+        return response.status(400).json({
+          success: false,
+          message: "Email is required",
+        });
+      }
+
+      await authService.resendVerificationEmail(email);
+
+      return response.status(200).json({
+        success: true,
+        message: "Verification email resent successfully",
+      });
+    } catch (error) {
+      if (error instanceof Error) {
+        if (error.message === "User not found") {
+          return response.status(404).json({
+            success: false,
+            message: error.message,
+          });
+        }
+        if (error.message === "Email already verified") {
+          return response.status(400).json({
+            success: false,
+            message: error.message,
+          });
+        }
+      }
+      return next(error);
     }
+  }
 
-    const section = age < 13 ? "kids" : "adults";
+  async completeUserProfile(
+    request: Request,
+    response: Response,
+    next: NextFunction
+  ) {
+    try {
+      const userId = request.userId;
+      if (!userId) {
+        return response.status(401).json({
+          success: false,
+          message: "Unauthorized: User ID missing",
+        });
+      }
 
-    const user = await User.findByIdAndUpdate(
-      userId,
-      {
+      const { age, location, hasConsentedToPrivacyPolicy, desiredRole } =
+        request.body;
+
+      if (!age || !hasConsentedToPrivacyPolicy) {
+        return response.status(400).json({
+          success: false,
+          message: "Age and privacy policy consent are required",
+        });
+      }
+
+      const user = await authService.completeUserProfile(
+        userId,
         age,
         location,
-        section,
-        isKid: section === "kids",
         hasConsentedToPrivacyPolicy,
-        isProfileComplete: true,
-      },
-      { new: true }
-    );
+        desiredRole
+      );
 
-    if (!user) {
-      res.status(404).json({ success: false, message: "User not found" });
-      return;
+      return response.status(200).json({
+        success: true,
+        user: {
+          id: user._id,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          role: user.role,
+          isProfileComplete: user.isProfileComplete,
+        },
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message === "User not found") {
+        return response.status(404).json({
+          success: false,
+          message: error.message,
+        });
+      }
+      return next(error);
     }
-
-    res.status(200).json({ success: true, user });
-  } catch (error) {
-    next(error);
   }
-};
 
-export const getCurrentUser = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
-  try {
-    const userId = req.userId;
-    const user = await User.findById(userId).select(
-      "email firstName lastName avatar isProfileComplete role section"
-    );
+  async getCurrentUser(
+    request: Request,
+    response: Response,
+    next: NextFunction
+  ) {
+    try {
+      const userId = request.userId;
+      if (!userId) {
+        return response.status(401).json({
+          success: false,
+          message: "Unauthorized: User ID missing",
+        });
+      }
 
-    if (!user) {
-      res.status(404).json({ success: false, message: "User not found" });
-      return;
+      const user = await authService.getCurrentUser(userId);
+
+      return response.status(200).json({
+        success: true,
+        user,
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message === "User not found") {
+        return response.status(404).json({
+          success: false,
+          message: error.message,
+        });
+      }
+      return next(error);
     }
-
-    res.status(200).json({ success: true, user });
-  } catch (error) {
-    next(error);
   }
-};
 
-export const getSession = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
-  try {
-    const userId = req.userId;
-    const user = await User.findById(userId).select(
-      "_id email firstName lastName isProfileComplete role"
-    );
+  async getUserSession(
+    request: Request,
+    response: Response,
+    next: NextFunction
+  ) {
+    try {
+      const userId = request.userId;
+      if (!userId) {
+        return response.status(401).json({
+          success: false,
+          message: "Unauthorized: User ID missing",
+        });
+      }
 
-    if (!user) {
-      res.status(404).json({ success: false, message: "User not found" });
-      return;
+      const session = await authService.getUserSession(userId);
+
+      return response.status(200).json({
+        success: true,
+        session,
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message === "User not found") {
+        return response.status(404).json({
+          success: false,
+          message: error.message,
+        });
+      }
+      return next(error);
     }
-
-    res.status(200).json({
-      success: true,
-      session: {
-        userId: user._id,
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        isProfileComplete: user.isProfileComplete,
-        role: user.role,
-      },
-    });
-  } catch (error) {
-    next(error);
   }
-};
+
+  async updateUserAvatar(
+    request: Request,
+    response: Response,
+    next: NextFunction
+  ) {
+    try {
+      const userId = request.userId;
+      const avatarFile = request.file;
+
+      if (!userId) {
+        return response.status(401).json({
+          success: false,
+          message: "Unauthorized: User ID missing",
+        });
+      }
+
+      if (!avatarFile) {
+        return response.status(400).json({
+          success: false,
+          message: "Avatar image is required",
+        });
+      }
+
+      const updateResult = await authService.updateUserAvatar(
+        userId,
+        avatarFile.buffer
+      );
+
+      return response.status(200).json({
+        success: true,
+        message: "Avatar updated successfully",
+        data: updateResult,
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message === "User not found") {
+        return response.status(404).json({
+          success: false,
+          message: error.message,
+        });
+      }
+      return next(error);
+    }
+  }
+
+  async initiatePasswordReset(
+    request: Request,
+    response: Response,
+    next: NextFunction
+  ) {
+    try {
+      const { email } = request.body;
+
+      if (!email) {
+        return response.status(400).json({
+          success: false,
+          message: "Email is required",
+        });
+      }
+
+      const resetToken = await authService.initiatePasswordReset(email);
+
+      return response.status(200).json({
+        success: true,
+        message: "Password reset initiated",
+        resetToken,
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message === "User not found") {
+        return response.status(404).json({
+          success: false,
+          message: error.message,
+        });
+      }
+      return next(error);
+    }
+  }
+}
+
+export default new AuthController();

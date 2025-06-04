@@ -18,6 +18,7 @@
         padding: 40px 50px;
         border-radius: 16px;
         max-width: 600px;
+        width: 100%;
         box-shadow: 0 10px 30px rgba(92, 26, 155, 0.2);
         border: 1px solid rgba(192, 132, 252, 0.1);
         text-align: center;
@@ -36,11 +37,18 @@
         margin-bottom: 30px;
       }
       .logo {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        width: 100%;
         margin-bottom: 25px;
+        padding: 0;
       }
-      .logo svg {
-        width: 60px;
+      .logo img {
         height: 60px;
+        width: auto;
+        display: block;
+        margin: 0 auto;
       }
       .divider {
         height: 1px;
@@ -62,19 +70,10 @@
   <body>
     <div class="container">
       <div class="logo">
-        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path
-            d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22Z"
-            stroke="#C084FC"
-            stroke-width="2"
-          />
-          <path
-            d="M12 16V16.01M12 8V12"
-            stroke="#E9D5FF"
-            stroke-width="2"
-            stroke-linecap="round"
-          />
-        </svg>
+        <img
+          src="https://res.cloudinary.com/dv70tsyz2/image/upload/v1749018368/tevah-icon_mdogur.png"
+          alt="Tevah Logo"
+        />
       </div>
 
       <h1>Welcome, <%= firstName %> <span style="color: #c084fc">🎉</span></h1>
@@ -87,7 +86,8 @@
 
       <div class="footer">
         <p style="margin: 0; font-size: 13px; color: #8b5cf6">
-          Bashorn Okunsnya | Lekki Aso | All Shades of Purple
+          23A, Bashorun Okusanya Street, Off Admiralty Road, Off Admiralty Wy,
+          Lekki Phase 1, Lagos
         </p>
       </div>
     </div>

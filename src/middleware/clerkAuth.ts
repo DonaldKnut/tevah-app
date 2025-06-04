@@ -1,13 +1,14 @@
 // src/middlewares/clerkAuth.ts
+import { verifyToken } from "@clerk/backend";
 import { createClerkClient } from "@clerk/clerk-sdk-node";
 import type { Request, Response, NextFunction } from "express";
 
-// Initialize Clerk client with proper typing
+// Initialize Clerk client
 const clerk = createClerkClient({
   secretKey: process.env.CLERK_SECRET_KEY || "",
 });
 
-// Type definitions for Clerk user data
+// Strongly type the Clerk user data
 declare global {
   namespace Express {
     interface Request {
@@ -28,25 +29,39 @@ export const extractUserFromToken = async (
 ) => {
   const { sessionToken } = req.body;
 
-  // Validate session token exists
   if (!sessionToken || typeof sessionToken !== "string") {
     return res.status(400).json({ error: "Valid session token required" });
   }
 
   try {
-    // Verify session and get user
-    const session = await clerk.sessions.verifySession(sessionToken);
-    const user = await clerk.users.getUser(session.userId);
+    // Verify the JWT session token
+    const payload = await verifyToken(sessionToken, {
+      secretKey: process.env.CLERK_SECRET_KEY!,
+    });
 
-    // Validate essential user data exists
-    if (!user.emailAddresses[0]?.emailAddress) {
+    // Type-safe extraction of userId
+    if (!payload || typeof payload !== "object" || !("userId" in payload)) {
+      throw new Error("Invalid token payload structure");
+    }
+
+    const userId = payload.userId as string;
+    if (!userId || typeof userId !== "string") {
+      throw new Error("Invalid user ID in token");
+    }
+
+    // Retrieve user details from Clerk
+    const user = await clerk.users.getUser(userId);
+
+    // Type-safe email access
+    const primaryEmail = user.emailAddresses?.[0]?.emailAddress;
+    if (!primaryEmail) {
       return res.status(400).json({ error: "User email not found" });
     }
 
-    // Attach sanitized user data to request
+    // Attach strongly-typed user data to the request object
     req.clerkUser = {
       id: user.id,
-      email: user.emailAddresses[0].emailAddress,
+      email: primaryEmail,
       fullName:
         [user.firstName, user.lastName].filter(Boolean).join(" ").trim() ||
         "Unknown",
@@ -55,9 +70,8 @@ export const extractUserFromToken = async (
 
     next();
   } catch (error) {
-    console.error("Clerk authentication error:", error);
+    console.error("Clerk token verification failed:", error);
 
-    // Handle specific Clerk errors
     const errorMessage =
       error instanceof Error ? error.message : "Authentication failed";
 
