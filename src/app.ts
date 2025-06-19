@@ -6,6 +6,11 @@ import http from "http";
 import userRoutes from "./routes/user.route";
 import authRoutes from "./routes/auth.route";
 import locationRoutes from "./routes/location.routes";
+import mediaRoutes from "./routes/media.route";
+import notificationsRoutes from "./routes/notifications.routes";
+import adminRoutes from "./routes/admin.routes";
+import devotionalsRoutes from "./routes/devotionals.routes";
+import logsRoutes from "./routes/logs.routes";
 
 // Load environment variables
 dotenv.config({ path: "/Users/user/Desktop/tevah-app/.env" }); // Explicit path for clarity
@@ -62,6 +67,11 @@ app.get("/api/health", (req, res) => {
 app.use("/api/user", userRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api", locationRoutes);
+app.use("/api/media", mediaRoutes);
+app.use("/api/notifications", notificationsRoutes);
+app.use("/api/admin", adminRoutes);
+app.use("/api", devotionalsRoutes);
+app.use("/api", logsRoutes);
 
 server.listen(PORT, () => {
   console.log(`✅ Server running at: http://localhost:${PORT}`);

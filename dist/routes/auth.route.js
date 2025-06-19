@@ -13,6 +13,7 @@ const router = (0, express_1.Router)();
 const upload = (0, multer_1.default)(); // In-memory file storage
 // Public Auth Routes
 router.post("/clerk-login", rateLimiter_1.authRateLimiter, (0, asyncHandler_1.asyncHandler)(auth_controller_1.default.clerkLogin));
+router.post("/oauth-login", rateLimiter_1.authRateLimiter, (0, asyncHandler_1.asyncHandler)(auth_controller_1.default.oauthLogin));
 router.post("/register", rateLimiter_1.authRateLimiter, (0, asyncHandler_1.asyncHandler)(auth_controller_1.default.registerUser));
 router.post("/login", rateLimiter_1.authRateLimiter, (0, asyncHandler_1.asyncHandler)(auth_controller_1.default.loginUser));
 // Sensitive Public Routes

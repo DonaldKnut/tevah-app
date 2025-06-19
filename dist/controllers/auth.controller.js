@@ -13,6 +13,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const auth_service_1 = __importDefault(require("../service/auth.service"));
+const user_model_1 = require("../models/user.model");
 class AuthController {
     clerkLogin(request, response, next) {
         return __awaiter(this, void 0, void 0, function* () {
@@ -29,6 +30,30 @@ class AuthController {
                     success: true,
                     user: result.user,
                     needsAgeSelection: result.needsAgeSelection,
+                });
+            }
+            catch (error) {
+                return next(error);
+            }
+        });
+    }
+    oauthLogin(request, response, next) {
+        return __awaiter(this, void 0, void 0, function* () {
+            try {
+                const { provider, token, userInfo } = request.body;
+                if (!provider || !token || !userInfo) {
+                    return response.status(400).json({
+                        success: false,
+                        message: "Provider, token, and user information are required",
+                    });
+                }
+                const result = yield auth_service_1.default.oauthLogin(provider, token, userInfo);
+                return response.status(200).json({
+                    success: true,
+                    message: "Login successful",
+                    token: result.token,
+                    user: result.user,
+                    isNewUser: result.isNewUser,
                 });
             }
             catch (error) {
@@ -251,36 +276,58 @@ class AuthController {
                 if (!userId) {
                     return response.status(401).json({
                         success: false,
-                        message: "Unauthorized: User ID missing",
+                        message: "Unauthorized",
                     });
                 }
-                const { age, location, hasConsentedToPrivacyPolicy, desiredRole } = request.body;
-                if (!age || !hasConsentedToPrivacyPolicy) {
-                    return response.status(400).json({
+                console.log("🛠️ Incoming /complete-profile body:", request.body);
+                const { age, isKid, section, role, location, avatarUpload, interests, hasConsentedToPrivacyPolicy, parentalControlEnabled, parentEmail, } = request.body;
+                const updateFields = {};
+                if (age !== undefined)
+                    updateFields.age = age;
+                if (isKid !== undefined)
+                    updateFields.isKid = isKid;
+                if (section)
+                    updateFields.section = section;
+                if (role)
+                    updateFields.role = role;
+                if (location)
+                    updateFields.location = location;
+                if (avatarUpload)
+                    updateFields.avatarUpload = avatarUpload;
+                if (interests)
+                    updateFields.interests = interests;
+                if (hasConsentedToPrivacyPolicy !== undefined)
+                    updateFields.hasConsentedToPrivacyPolicy = hasConsentedToPrivacyPolicy;
+                if (parentalControlEnabled !== undefined)
+                    updateFields.parentalControlEnabled = parentalControlEnabled;
+                if (parentEmail)
+                    updateFields.parentEmail = parentEmail;
+                const userBeforeUpdate = yield user_model_1.User.findById(userId);
+                const willBeComplete = ((userBeforeUpdate === null || userBeforeUpdate === void 0 ? void 0 : userBeforeUpdate.age) || updateFields.age) !== undefined &&
+                    ((userBeforeUpdate === null || userBeforeUpdate === void 0 ? void 0 : userBeforeUpdate.isKid) || updateFields.isKid) !== undefined &&
+                    ((userBeforeUpdate === null || userBeforeUpdate === void 0 ? void 0 : userBeforeUpdate.section) || updateFields.section) &&
+                    ((userBeforeUpdate === null || userBeforeUpdate === void 0 ? void 0 : userBeforeUpdate.role) || updateFields.role) &&
+                    ((userBeforeUpdate === null || userBeforeUpdate === void 0 ? void 0 : userBeforeUpdate.hasConsentedToPrivacyPolicy) !== undefined ||
+                        updateFields.hasConsentedToPrivacyPolicy !== undefined);
+                if (willBeComplete) {
+                    updateFields.isProfileComplete = true;
+                }
+                const user = yield user_model_1.User.findByIdAndUpdate(userId, updateFields, {
+                    new: true,
+                });
+                if (!user) {
+                    return response.status(404).json({
                         success: false,
-                        message: "Age and privacy policy consent are required",
+                        message: "User not found",
                     });
                 }
-                const user = yield auth_service_1.default.completeUserProfile(userId, age, location, hasConsentedToPrivacyPolicy, desiredRole);
                 return response.status(200).json({
                     success: true,
-                    user: {
-                        id: user._id,
-                        email: user.email,
-                        firstName: user.firstName,
-                        lastName: user.lastName,
-                        role: user.role,
-                        isProfileComplete: user.isProfileComplete,
-                    },
+                    message: "Profile updated successfully",
+                    user,
                 });
             }
             catch (error) {
-                if (error instanceof Error && error.message === "User not found") {
-                    return response.status(404).json({
-                        success: false,
-                        message: error.message,
-                    });
-                }
                 return next(error);
             }
         });

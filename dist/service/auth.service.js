@@ -43,6 +43,50 @@ class AuthService {
         }
         return verificationFlags;
     }
+    oauthLogin(provider, token, userInfo) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const decoded = yield (0, clerk_1.verifyClerkToken)(token);
+            const email = decoded.email;
+            if (!email) {
+                throw new Error(`${provider.charAt(0).toUpperCase() + provider.slice(1)} email not found in Clerk token`);
+            }
+            let user = yield user_model_1.User.findOne({ email });
+            const isNewUser = !user;
+            if (!user) {
+                user = yield user_model_1.User.create({
+                    email,
+                    firstName: userInfo.firstName || "User",
+                    lastName: userInfo.lastName || "",
+                    avatar: userInfo.avatar || "",
+                    provider: provider.toLowerCase(),
+                    clerkId: decoded.sub,
+                    isEmailVerified: true,
+                    isProfileComplete: false,
+                    age: 0,
+                    isKid: false,
+                    section: "adults",
+                    role: "learner",
+                    hasConsentedToPrivacyPolicy: false,
+                });
+                yield (0, mailer_1.sendWelcomeEmail)(user.email, user.firstName || "User");
+            }
+            const jwtToken = jsonwebtoken_1.default.sign({ userId: user._id }, JWT_SECRET, {
+                expiresIn: "7d",
+            });
+            return {
+                token: jwtToken,
+                user: {
+                    id: user._id,
+                    email: user.email,
+                    firstName: user.firstName,
+                    lastName: user.lastName,
+                    avatar: user.avatar,
+                    isProfileComplete: user.isProfileComplete,
+                },
+                isNewUser,
+            };
+        });
+    }
     clerkLogin(token, userInfo) {
         return __awaiter(this, void 0, void 0, function* () {
             const decoded = yield (0, clerk_1.verifyClerkToken)(token);
@@ -206,13 +250,16 @@ class AuthService {
             return user;
         });
     }
-    completeUserProfile(userId, age, location, hasConsentedToPrivacyPolicy, desiredRole) {
+    completeUserProfile(userId, age, location, hasConsentedToPrivacyPolicy, desiredRole, interests, section) {
         return __awaiter(this, void 0, void 0, function* () {
             const currentUser = yield user_model_1.User.findById(userId);
             if (!currentUser) {
                 throw new Error("User not found");
             }
-            const section = age < 13 ? "kids" : "adults";
+            let userSection = section;
+            if (!userSection) {
+                userSection = age < 13 ? "kids" : "adults";
+            }
             let role = currentUser.role;
             if (currentUser.role === "learner" && desiredRole) {
                 const allowedRoles = [
@@ -228,10 +275,15 @@ class AuthService {
                 }
             }
             const verificationFlags = role !== currentUser.role ? this.setVerificationFlags(role) : {};
-            const user = yield user_model_1.User.findByIdAndUpdate(userId, Object.assign({ age,
-                location,
-                section, isKid: section === "kids", role,
-                hasConsentedToPrivacyPolicy, isProfileComplete: true }, verificationFlags), { new: true });
+            const updateData = Object.assign({ age,
+                location, section: userSection, isKid: userSection === "kids", role,
+                hasConsentedToPrivacyPolicy, isProfileComplete: true }, verificationFlags);
+            if (interests && Array.isArray(interests)) {
+                updateData.interests = interests;
+            }
+            const user = yield user_model_1.User.findByIdAndUpdate(userId, updateData, {
+                new: true,
+            });
             if (!user) {
                 throw new Error("User not found");
             }
@@ -240,7 +292,7 @@ class AuthService {
     }
     getCurrentUser(userId) {
         return __awaiter(this, void 0, void 0, function* () {
-            const user = yield user_model_1.User.findById(userId).select("email firstName lastName avatar isProfileComplete role section");
+            const user = yield user_model_1.User.findById(userId).select("email firstName lastName avatar isProfileComplete role section interests");
             if (!user) {
                 throw new Error("User not found");
             }
@@ -270,7 +322,6 @@ class AuthService {
             if (!user) {
                 throw new Error("User not found");
             }
-            // Delete old avatar if exists
             if (user.avatar) {
                 try {
                     const publicId = (_a = user.avatar.split("/").pop()) === null || _a === void 0 ? void 0 : _a.split(".")[0];
@@ -282,7 +333,6 @@ class AuthService {
                     console.error("Error deleting old avatar:", error);
                 }
             }
-            // Upload new avatar
             const avatarUrl = yield fileUpload_service_1.default.uploadImage(avatarBuffer, "user-avatars");
             user.avatar = avatarUrl;
             yield user.save();
@@ -299,7 +349,7 @@ class AuthService {
                 throw new Error("User not found");
             }
             const resetToken = crypto_1.default.randomBytes(20).toString("hex");
-            const resetTokenExpires = new Date(Date.now() + 3600000); // 1 hour
+            const resetTokenExpires = new Date(Date.now() + 3600000);
             user.resetPasswordToken = resetToken;
             user.resetPasswordExpires = resetTokenExpires;
             yield user.save();

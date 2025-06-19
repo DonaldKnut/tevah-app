@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import authService from "../service/auth.service";
 import { VALID_INTERESTS } from "../constants/interests";
+import { User } from "../models/user.model";
 
 class AuthController {
   async clerkLogin(request: Request, response: Response, next: NextFunction) {
@@ -306,87 +307,82 @@ class AuthController {
   ) {
     try {
       const userId = request.userId;
+
       if (!userId) {
         return response.status(401).json({
           success: false,
-          message: "Unauthorized: User ID missing",
+          message: "Unauthorized",
         });
       }
 
+      // Destructure all possible profile fields
       const {
         age,
-        location,
-        hasConsentedToPrivacyPolicy,
-        desiredRole,
-        interests,
+        isKid,
         section,
+        role,
+        location,
+        avatarUpload,
+        interests,
+        hasConsentedToPrivacyPolicy,
+        parentalControlEnabled,
+        parentEmail,
       } = request.body;
 
-      if (!age || !hasConsentedToPrivacyPolicy || !section) {
-        return response.status(400).json({
+      // Build update object based on what's provided
+      const updateFields: any = {};
+      if (age !== undefined) updateFields.age = age;
+      if (isKid !== undefined) updateFields.isKid = isKid;
+      if (section !== undefined) updateFields.section = section;
+      if (role !== undefined) updateFields.role = role;
+      if (location !== undefined) updateFields.location = location;
+      if (avatarUpload !== undefined) updateFields.avatarUpload = avatarUpload;
+      if (interests !== undefined) updateFields.interests = interests;
+      if (hasConsentedToPrivacyPolicy !== undefined) {
+        updateFields.hasConsentedToPrivacyPolicy = hasConsentedToPrivacyPolicy;
+      }
+      if (parentalControlEnabled !== undefined) {
+        updateFields.parentalControlEnabled = parentalControlEnabled;
+      }
+      if (parentEmail !== undefined) updateFields.parentEmail = parentEmail;
+
+      // Fetch current user
+      const userBeforeUpdate = await User.findById(userId);
+
+      if (!userBeforeUpdate) {
+        return response.status(404).json({
           success: false,
-          message: "Age, privacy policy consent, and section are required",
+          message: "User not found",
         });
       }
 
-      // Validate section
-      if (!["kids", "adults"].includes(section)) {
-        return response.status(400).json({
-          success: false,
-          message: "Invalid section. Must be 'kids' or 'adults'",
-        });
+      // Helper function to check field existence
+      const isSet = (field: string) =>
+        userBeforeUpdate[field] !== undefined ||
+        updateFields[field] !== undefined;
+
+      const isProfileComplete =
+        isSet("age") &&
+        isSet("isKid") &&
+        (userBeforeUpdate.section || updateFields.section) &&
+        (userBeforeUpdate.role || updateFields.role) &&
+        isSet("hasConsentedToPrivacyPolicy");
+
+      if (isProfileComplete) {
+        updateFields.isProfileComplete = true;
       }
 
-      // Validate interests
-      if (interests && !Array.isArray(interests)) {
-        return response.status(400).json({
-          success: false,
-          message: "Interests must be an array",
-        });
-      }
-
-      if (
-        interests &&
-        interests.some(
-          (interest: string) => !VALID_INTERESTS.includes(interest)
-        )
-      ) {
-        return response.status(400).json({
-          success: false,
-          message: `Invalid interests. Must be one of: ${VALID_INTERESTS.join(", ")}`,
-        });
-      }
-
-      const user = await authService.completeUserProfile(
-        userId,
-        age,
-        location,
-        hasConsentedToPrivacyPolicy,
-        desiredRole,
-        interests,
-        section
-      );
+      // Update user
+      const updatedUser = await User.findByIdAndUpdate(userId, updateFields, {
+        new: true,
+      });
 
       return response.status(200).json({
         success: true,
-        user: {
-          id: user._id,
-          email: user.email,
-          firstName: user.firstName,
-          lastName: user.lastName,
-          role: user.role,
-          interests: user.interests,
-          section: user.section,
-          isProfileComplete: user.isProfileComplete,
-        },
+        message: "Profile updated successfully",
+        user: updatedUser,
       });
     } catch (error) {
-      if (error instanceof Error && error.message === "User not found") {
-        return response.status(404).json({
-          success: false,
-          message: error.message,
-        });
-      }
       return next(error);
     }
   }

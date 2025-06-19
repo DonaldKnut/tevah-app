@@ -1,10 +1,10 @@
 import mongoose, { Schema, Document } from "mongoose";
 import { VALID_INTERESTS } from "../constants/interests";
 
-// Auth providers
+// Define authentication providers
 export type AuthProvider = "clerk" | "email";
 
-// User roles
+// Define user roles
 export type UserRole =
   | "learner"
   | "parent"
@@ -15,13 +15,13 @@ export type UserRole =
   | "vendor"
   | "church_admin";
 
-// User sections
+// Define user sections
 export type UserSection = "kids" | "adults";
 
-// Interests
+// Define interests based on the predefined constant list
 export type InterestType = (typeof VALID_INTERESTS)[number];
 
-// TS Interface
+// TypeScript interface representing a User object
 export interface IUser {
   firstName?: string;
   lastName?: string;
@@ -29,6 +29,7 @@ export interface IUser {
   provider: AuthProvider;
   clerkId?: string;
   avatar?: string;
+  avatarUpload?: string;
   password: string;
   verificationCode?: string;
   verificationCodeExpires?: Date;
@@ -59,10 +60,10 @@ export interface IUser {
   updatedAt?: Date;
 }
 
-// Mongoose Document extension
+// Extend Mongoose's Document with the IUser interface
 export interface IUserDocument extends IUser, Document {}
 
-// Schema definition
+// Define the Mongoose schema for the User model
 const userSchema = new Schema<IUserDocument>(
   {
     firstName: { type: String },
@@ -70,16 +71,17 @@ const userSchema = new Schema<IUserDocument>(
     email: { type: String, required: true, unique: true },
     provider: { type: String, enum: ["clerk", "email"], required: true },
     clerkId: { type: String },
-    avatar: { type: String },
+    avatar: { type: String }, // optional legacy avatar field
+    avatarUpload: { type: String }, // used in current profile update flow
     password: { type: String },
     verificationCode: { type: String },
     verificationCodeExpires: { type: Date },
     resetPasswordToken: { type: String },
     resetPasswordExpires: { type: Date },
 
-    age: { type: Number }, // no default
-    isKid: { type: Boolean }, // no default
-    section: { type: String, enum: ["kids", "adults"] }, // no default
+    age: { type: Number },
+    isKid: { type: Boolean },
+    section: { type: String, enum: ["kids", "adults"] },
     role: {
       type: String,
       enum: [
@@ -120,6 +122,6 @@ const userSchema = new Schema<IUserDocument>(
   { timestamps: true }
 );
 
-// Export model
+// Export the Mongoose model
 export const User =
   mongoose.models.User || mongoose.model<IUserDocument>("User", userSchema);

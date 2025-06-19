@@ -36,22 +36,23 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.User = void 0;
 const mongoose_1 = __importStar(require("mongoose"));
 const interests_1 = require("../constants/interests");
-// Schema definition
+// Define the Mongoose schema for the User model
 const userSchema = new mongoose_1.Schema({
     firstName: { type: String },
     lastName: { type: String },
     email: { type: String, required: true, unique: true },
     provider: { type: String, enum: ["clerk", "email"], required: true },
     clerkId: { type: String },
-    avatar: { type: String },
+    avatar: { type: String }, // optional legacy avatar field
+    avatarUpload: { type: String }, // used in current profile update flow
     password: { type: String },
     verificationCode: { type: String },
     verificationCodeExpires: { type: Date },
     resetPasswordToken: { type: String },
     resetPasswordExpires: { type: Date },
-    age: { type: Number }, // no default
-    isKid: { type: Boolean }, // no default
-    section: { type: String, enum: ["kids", "adults"] }, // no default
+    age: { type: Number },
+    isKid: { type: Boolean },
+    section: { type: String, enum: ["kids", "adults"] },
     role: {
         type: String,
         enum: [
@@ -85,5 +86,5 @@ const userSchema = new mongoose_1.Schema({
     isVerifiedVendor: { type: Boolean, default: false },
     isVerifiedChurch: { type: Boolean, default: false },
 }, { timestamps: true });
-// Export model
+// Export the Mongoose model
 exports.User = mongoose_1.default.models.User || mongoose_1.default.model("User", userSchema);

@@ -9,39 +9,60 @@ cloudinary.config({
 });
 
 class FileUploadService {
-  async uploadImage(imageBuffer: Buffer, folderPath: string): Promise<string> {
+  async uploadMedia(
+    fileBuffer: Buffer,
+    folderPath: string,
+    mimetype: string
+  ): Promise<UploadApiResponse> {
     return new Promise((resolve, reject) => {
+      const isVideoOrAudio =
+        mimetype.startsWith("video") || mimetype.startsWith("audio");
+
       const uploadStream = cloudinary.uploader.upload_stream(
-        { folder: folderPath },
+        {
+          folder: folderPath,
+          resource_type: isVideoOrAudio ? "video" : "auto",
+        },
         (error, uploadResult?: UploadApiResponse) => {
           if (error) {
-            return reject(new Error(`Image upload failed: ${error.message}`));
+            return reject(
+              new Error(
+                `${
+                  isVideoOrAudio ? "Video/Audio" : "File"
+                } upload failed: ${error.message}`
+              )
+            );
           }
           if (!uploadResult) {
             return reject(
-              new Error("Image upload failed: No response from Cloudinary")
+              new Error("Upload failed: No response from Cloudinary")
             );
           }
-          resolve(uploadResult.secure_url);
+          resolve(uploadResult);
         }
       );
 
-      const bufferReadableStream = new Readable();
-      bufferReadableStream.push(imageBuffer);
-      bufferReadableStream.push(null); // Signals end of stream
-      bufferReadableStream.pipe(uploadStream);
+      const stream = new Readable();
+      stream.push(fileBuffer);
+      stream.push(null);
+      stream.pipe(uploadStream);
     });
   }
 
-  async deleteImage(publicId: string): Promise<void> {
+  async deleteMedia(
+    publicId: string,
+    resourceType: "image" | "video" = "video"
+  ): Promise<void> {
     try {
-      const deletionResult = await cloudinary.uploader.destroy(publicId);
-      if (deletionResult.result !== "ok") {
-        throw new Error(`Image deletion failed: ${deletionResult.result}`);
+      const result = await cloudinary.uploader.destroy(publicId, {
+        resource_type: resourceType,
+      });
+      if (result.result !== "ok") {
+        throw new Error(`Media deletion failed: ${result.result}`);
       }
     } catch (error) {
-      console.error("Image deletion error:", error);
-      throw new Error("Failed to delete image from Cloudinary");
+      console.error("Cloudinary deletion error:", error);
+      throw new Error("Failed to delete media from Cloudinary");
     }
   }
 }

@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
+import { User } from "../models/user.model";
 
-// Middleware to verify JWT token and attach userId to request
 export const verifyToken = async (
   req: Request,
   res: Response,
@@ -9,29 +9,42 @@ export const verifyToken = async (
 ): Promise<void> => {
   const authHeader = req.headers.authorization;
 
-  // Check for Bearer token format
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    res
-      .status(401)
-      .json({ success: false, message: "Unauthorized: No token provided" });
+    res.status(401).json({
+      success: false,
+      message: "Unauthorized: No token provided",
+    });
     return;
   }
 
   const token = authHeader.split(" ")[1];
 
   try {
-    // Decode and verify token using your secret key
-    const decodedToken = jwt.verify(token, process.env.JWT_SECRET!) as {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET!) as {
       userId: string;
     };
 
-    // Attach userId to request object
-    req.userId = decodedToken.userId;
+    req.userId = decoded.userId;
 
-    // Proceed to the next middleware or controller
+    // Fetch user and attach full user to request
+    const user = await User.findById(decoded.userId).select(
+      "role isVerifiedCreator isVerifiedVendor isVerifiedChurch"
+    );
+    if (!user) {
+      res.status(401).json({ success: false, message: "User not found" });
+      return;
+    }
+
+    // Attach the user object for role checks
+    req.user = {
+      role: user.role,
+      isVerifiedCreator: user.isVerifiedCreator,
+      isVerifiedVendor: user.isVerifiedVendor,
+      isVerifiedChurch: user.isVerifiedChurch,
+    };
+
     next();
   } catch (error: any) {
-    // Token is invalid or expired
     res.status(401).json({
       success: false,
       message: "Invalid token",
