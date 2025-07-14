@@ -69,6 +69,8 @@ const mediaSchema = new Schema<IMedia>(
         "teachings",
         "marriage",
         "counselling",
+        "worship",
+        "inspiration",
         "", // Allow empty category
       ],
     },
@@ -93,6 +95,8 @@ const mediaSchema = new Schema<IMedia>(
             "prayer",
             "maturity",
             "spiritual growth",
+            "worship",
+            "inspiration",
           ];
           return tags.every((tag) => allowedTopics.includes(tag.toLowerCase()));
         },
@@ -169,7 +173,6 @@ const mediaSchema = new Schema<IMedia>(
 mediaSchema.index({ isLive: 1, liveStreamStatus: 1 });
 mediaSchema.index({
   title: "text",
-  topics: 1,
   category: 1,
   contentType: 1,
   uploadedBy: 1,
