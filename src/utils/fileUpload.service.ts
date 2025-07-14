@@ -49,6 +49,13 @@ class FileUploadService {
     });
   }
 
+  async uploadImage(
+    fileBuffer: Buffer,
+    folderPath: string = "avatars"
+  ): Promise<UploadApiResponse> {
+    return this.uploadMedia(fileBuffer, folderPath, "image/jpeg");
+  }
+
   async deleteMedia(
     publicId: string,
     resourceType: "image" | "video" = "video"

@@ -160,13 +160,13 @@ class AuthService {
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const verificationFlags = this.setVerificationFlags(role);
-
     let avatarUrl: string | undefined;
     if (avatarBuffer) {
-      avatarUrl = await fileUploadService.uploadImage(
+      const uploadResult = await fileUploadService.uploadImage(
         avatarBuffer,
         "user-avatars"
       );
+      avatarUrl = uploadResult.secure_url;
     }
 
     const newUser = await User.create({
@@ -404,23 +404,30 @@ class AuthService {
       throw new Error("User not found");
     }
 
+    // Delete previous avatar from Cloudinary if exists
     if (user.avatar) {
       try {
         const publicId = user.avatar.split("/").pop()?.split(".")[0];
         if (publicId) {
-          await fileUploadService.deleteImage(`user-avatars/${publicId}`);
+          await fileUploadService.deleteMedia(
+            `user-avatars/${publicId}`,
+            "image"
+          );
         }
       } catch (error) {
         console.error("Error deleting old avatar:", error);
       }
     }
 
-    const avatarUrl = await fileUploadService.uploadImage(
+    // Upload new avatar
+    const uploadResult = await fileUploadService.uploadImage(
       avatarBuffer,
       "user-avatars"
     );
 
-    user.avatar = avatarUrl;
+    // ✅ Assign only the secure_url string
+    user.avatar = uploadResult.secure_url;
+
     await user.save();
 
     return {
