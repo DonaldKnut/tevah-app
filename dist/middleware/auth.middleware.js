@@ -14,27 +14,36 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.verifyToken = void 0;
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
-// Middleware to verify JWT token and attach userId to request
+const user_model_1 = require("../models/user.model");
 const verifyToken = (req, res, next) => __awaiter(void 0, void 0, void 0, function* () {
     const authHeader = req.headers.authorization;
-    // Check for Bearer token format
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-        res
-            .status(401)
-            .json({ success: false, message: "Unauthorized: No token provided" });
+        res.status(401).json({
+            success: false,
+            message: "Unauthorized: No token provided",
+        });
         return;
     }
     const token = authHeader.split(" ")[1];
     try {
-        // Decode and verify token using your secret key
-        const decodedToken = jsonwebtoken_1.default.verify(token, process.env.JWT_SECRET);
-        // Attach userId to request object
-        req.userId = decodedToken.userId;
-        // Proceed to the next middleware or controller
+        const decoded = jsonwebtoken_1.default.verify(token, process.env.JWT_SECRET);
+        req.userId = decoded.userId;
+        // Fetch user and attach full user to request
+        const user = yield user_model_1.User.findById(decoded.userId).select("role isVerifiedCreator isVerifiedVendor isVerifiedChurch");
+        if (!user) {
+            res.status(401).json({ success: false, message: "User not found" });
+            return;
+        }
+        // Attach the user object for role checks
+        req.user = {
+            role: user.role,
+            isVerifiedCreator: user.isVerifiedCreator,
+            isVerifiedVendor: user.isVerifiedVendor,
+            isVerifiedChurch: user.isVerifiedChurch,
+        };
         next();
     }
     catch (error) {
-        // Token is invalid or expired
         res.status(401).json({
             success: false,
             message: "Invalid token",

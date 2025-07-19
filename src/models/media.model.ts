@@ -69,9 +69,6 @@ const mediaSchema = new Schema<IMedia>(
         "teachings",
         "marriage",
         "counselling",
-        "worship",
-        "inspiration",
-        "", // Allow empty category
       ],
     },
     fileUrl: {

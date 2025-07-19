@@ -14,6 +14,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const auth_service_1 = __importDefault(require("../service/auth.service"));
 const user_model_1 = require("../models/user.model");
+const multer_1 = __importDefault(require("multer"));
 class AuthController {
     clerkLogin(request, response, next) {
         return __awaiter(this, void 0, void 0, function* () {
@@ -107,7 +108,14 @@ class AuthController {
                         message: "Avatar image is required",
                     });
                 }
-                const user = yield auth_service_1.default.registerUser(email, password, firstName, lastName, desiredRole, avatarFile.buffer);
+                const validImageMimeTypes = ["image/jpeg", "image/png", "image/gif"];
+                if (!validImageMimeTypes.includes(avatarFile.mimetype)) {
+                    return response.status(400).json({
+                        success: false,
+                        message: `Invalid image type: ${avatarFile.mimetype}`,
+                    });
+                }
+                const user = yield auth_service_1.default.registerUser(email, password, firstName, lastName, desiredRole, avatarFile.buffer, avatarFile.mimetype);
                 return response.status(201).json({
                     success: true,
                     message: "User registered successfully. Please verify your email.",
@@ -279,52 +287,59 @@ class AuthController {
                         message: "Unauthorized",
                     });
                 }
-                console.log("🛠️ Incoming /complete-profile body:", request.body);
+                // Destructure all possible profile fields
                 const { age, isKid, section, role, location, avatarUpload, interests, hasConsentedToPrivacyPolicy, parentalControlEnabled, parentEmail, } = request.body;
+                // Build update object based on what's provided
                 const updateFields = {};
                 if (age !== undefined)
                     updateFields.age = age;
                 if (isKid !== undefined)
                     updateFields.isKid = isKid;
-                if (section)
+                if (section !== undefined)
                     updateFields.section = section;
-                if (role)
+                if (role !== undefined)
                     updateFields.role = role;
-                if (location)
+                if (location !== undefined)
                     updateFields.location = location;
-                if (avatarUpload)
+                if (avatarUpload !== undefined)
                     updateFields.avatarUpload = avatarUpload;
-                if (interests)
+                if (interests !== undefined)
                     updateFields.interests = interests;
-                if (hasConsentedToPrivacyPolicy !== undefined)
+                if (hasConsentedToPrivacyPolicy !== undefined) {
                     updateFields.hasConsentedToPrivacyPolicy = hasConsentedToPrivacyPolicy;
-                if (parentalControlEnabled !== undefined)
-                    updateFields.parentalControlEnabled = parentalControlEnabled;
-                if (parentEmail)
-                    updateFields.parentEmail = parentEmail;
-                const userBeforeUpdate = yield user_model_1.User.findById(userId);
-                const willBeComplete = ((userBeforeUpdate === null || userBeforeUpdate === void 0 ? void 0 : userBeforeUpdate.age) || updateFields.age) !== undefined &&
-                    ((userBeforeUpdate === null || userBeforeUpdate === void 0 ? void 0 : userBeforeUpdate.isKid) || updateFields.isKid) !== undefined &&
-                    ((userBeforeUpdate === null || userBeforeUpdate === void 0 ? void 0 : userBeforeUpdate.section) || updateFields.section) &&
-                    ((userBeforeUpdate === null || userBeforeUpdate === void 0 ? void 0 : userBeforeUpdate.role) || updateFields.role) &&
-                    ((userBeforeUpdate === null || userBeforeUpdate === void 0 ? void 0 : userBeforeUpdate.hasConsentedToPrivacyPolicy) !== undefined ||
-                        updateFields.hasConsentedToPrivacyPolicy !== undefined);
-                if (willBeComplete) {
-                    updateFields.isProfileComplete = true;
                 }
-                const user = yield user_model_1.User.findByIdAndUpdate(userId, updateFields, {
-                    new: true,
-                });
-                if (!user) {
+                if (parentalControlEnabled !== undefined) {
+                    updateFields.parentalControlEnabled = parentalControlEnabled;
+                }
+                if (parentEmail !== undefined)
+                    updateFields.parentEmail = parentEmail;
+                // Fetch current user
+                const userBeforeUpdate = yield user_model_1.User.findById(userId);
+                if (!userBeforeUpdate) {
                     return response.status(404).json({
                         success: false,
                         message: "User not found",
                     });
                 }
+                // Helper function to check field existence
+                const isSet = (field) => userBeforeUpdate[field] !== undefined ||
+                    updateFields[field] !== undefined;
+                const isProfileComplete = isSet("age") &&
+                    isSet("isKid") &&
+                    (userBeforeUpdate.section || updateFields.section) &&
+                    (userBeforeUpdate.role || updateFields.role) &&
+                    isSet("hasConsentedToPrivacyPolicy");
+                if (isProfileComplete) {
+                    updateFields.isProfileComplete = true;
+                }
+                // Update user
+                const updatedUser = yield user_model_1.User.findByIdAndUpdate(userId, updateFields, {
+                    new: true,
+                });
                 return response.status(200).json({
                     success: true,
                     message: "Profile updated successfully",
-                    user,
+                    user: updatedUser,
                 });
             }
             catch (error) {
@@ -403,7 +418,14 @@ class AuthController {
                         message: "Avatar image is required",
                     });
                 }
-                const updateResult = yield auth_service_1.default.updateUserAvatar(userId, avatarFile.buffer);
+                const validImageMimeTypes = ["image/jpeg", "image/png", "image/gif"];
+                if (!validImageMimeTypes.includes(avatarFile.mimetype)) {
+                    return response.status(400).json({
+                        success: false,
+                        message: `Invalid image type: ${avatarFile.mimetype}`,
+                    });
+                }
+                const updateResult = yield auth_service_1.default.updateUserAvatar(userId, avatarFile.buffer, avatarFile.mimetype);
                 return response.status(200).json({
                     success: true,
                     message: "Avatar updated successfully",
@@ -415,6 +437,27 @@ class AuthController {
                     return response.status(404).json({
                         success: false,
                         message: error.message,
+                    });
+                }
+                if (error instanceof Error &&
+                    error.message.startsWith("Invalid image type")) {
+                    return response.status(400).json({
+                        success: false,
+                        message: error.message,
+                    });
+                }
+                if (error instanceof multer_1.default.MulterError &&
+                    error.code === "LIMIT_UNEXPECTED_FILE") {
+                    return response.status(400).json({
+                        success: false,
+                        message: `Unexpected field in file upload. Expected field name: 'avatar'`,
+                    });
+                }
+                if (error instanceof multer_1.default.MulterError &&
+                    error.code === "LIMIT_FILE_SIZE") {
+                    return response.status(400).json({
+                        success: false,
+                        message: "File size exceeds the 5MB limit",
                     });
                 }
                 return next(error);

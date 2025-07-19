@@ -3,6 +3,7 @@ import { MediaInteraction } from "../models/mediaInteraction.model";
 import { Bookmark } from "../models/bookmark.model";
 import { User } from "../models/user.model";
 import { Types, ClientSession } from "mongoose";
+import fileUploadService from "./fileUpload.service";
 
 interface MediaInput {
   title: string;
@@ -10,7 +11,8 @@ interface MediaInput {
   contentType: "music" | "videos" | "books" | "live";
   category?: string;
   uploadedBy: Types.ObjectId | string;
-  fileUrl?: string;
+  file?: Buffer; // Changed from fileUrl to file buffer for direct upload
+  fileUrl?: string; // Added fileUrl to match Media model
   fileMimeType?: string;
   topics?: string[];
   duration?: number;
@@ -27,14 +29,52 @@ interface MediaInteractionInput {
   interactionType: "view" | "listen" | "read" | "download";
 }
 
+// Define valid duration range keys to fix TypeScript error
+type DurationRangeKey = "short" | "medium" | "long";
+
 export class MediaService {
   async uploadMedia(data: MediaInput) {
+    const validMimeTypes: { [key in MediaInput["contentType"]]: string[] } = {
+      videos: ["video/mp4", "video/webm", "video/ogg", "video/mpeg"],
+      music: ["audio/mpeg", "audio/wav", "audio/ogg", "audio/mp3"],
+      books: ["application/pdf", "application/epub+zip"],
+      live: [],
+    };
+
+    if (data.file && data.fileMimeType) {
+      if (!validMimeTypes[data.contentType].includes(data.fileMimeType)) {
+        throw new Error(
+          `Invalid MIME type ${data.fileMimeType} for content type ${data.contentType}`
+        );
+      }
+    }
+
+    let fileUrl: string | undefined;
+    if (data.contentType !== "live" && data.file && data.fileMimeType) {
+      try {
+        const uploadResult = await fileUploadService.uploadMedia(
+          data.file,
+          `media/${data.contentType}`,
+          data.fileMimeType
+        );
+        fileUrl = uploadResult.secure_url;
+        if (!fileUrl) {
+          throw new Error("Cloudinary upload did not return a valid URL");
+        }
+      } catch (error) {
+        console.error(`Error uploading ${data.contentType}:`, error);
+        throw new Error(`Failed to upload ${data.contentType}`);
+      }
+    } else if (data.contentType !== "live") {
+      throw new Error("File is required for non-live content types");
+    }
+
     const media = new Media({
       title: data.title,
       description: data.description,
       contentType: data.contentType,
       category: data.category,
-      fileUrl: data.fileUrl,
+      fileUrl,
       fileMimeType: data.fileMimeType,
       topics: data.topics || [],
       uploadedBy:
@@ -95,13 +135,23 @@ export class MediaService {
       }
     }
 
+    // Fix TypeScript error by explicitly typing durationRanges
+    const durationRanges: Record<
+      DurationRangeKey,
+      { $lte?: number; $gte?: number; $gt?: number }
+    > = {
+      short: { $lte: 5 * 60 },
+      medium: { $gte: 5 * 60, $lte: 15 * 60 },
+      long: { $gt: 15 * 60 },
+    };
+
     if (filters.duration) {
-      const durationRanges = {
-        short: { $lte: 5 * 60 },
-        medium: { $gte: 5 * 60, $lte: 15 * 60 },
-        long: { $gt: 15 * 60 },
-      };
-      query.duration = durationRanges[filters.duration] || {};
+      const durationKey = filters.duration as DurationRangeKey;
+      if (durationRanges[durationKey]) {
+        query.duration = durationRanges[durationKey];
+      } else {
+        query.duration = {};
+      }
     }
 
     if (filters.startDate || filters.endDate) {
@@ -180,6 +230,21 @@ export class MediaService {
       throw new Error("Unauthorized to delete this media");
     }
 
+    // Delete media file from storage if it exists
+    if (media.fileUrl) {
+      try {
+        const publicId = media.fileUrl.split("/").pop()?.split(".")[0];
+        if (publicId) {
+          await fileUploadService.deleteMedia(
+            `media-${media.contentType}/${publicId}`,
+            media.contentType
+          );
+        }
+      } catch (error) {
+        console.error("Error deleting media file:", error);
+      }
+    }
+
     await Media.findByIdAndDelete(mediaIdentifier);
     return true;
   }
@@ -204,13 +269,13 @@ export class MediaService {
         !["read", "download"].includes(data.interactionType))
     ) {
       throw new Error(
-        `Invalid interaction type for ${media.contentType} media`
+        `Invalid interaction type ${data.interactionType} for ${media.contentType} media`
       );
     }
 
     const session: ClientSession = await Media.startSession();
     try {
-      await session.withTransaction(async () => {
+      const interaction = await session.withTransaction(async () => {
         const existingInteraction = await MediaInteraction.findOne({
           user: new Types.ObjectId(data.userIdentifier),
           media: new Types.ObjectId(data.mediaIdentifier),
@@ -247,12 +312,6 @@ export class MediaService {
         );
 
         return interaction[0];
-      });
-
-      const interaction = await MediaInteraction.findOne({
-        user: new Types.ObjectId(data.userIdentifier),
-        media: new Types.ObjectId(data.mediaIdentifier),
-        interactionType: data.interactionType,
       });
 
       return interaction;

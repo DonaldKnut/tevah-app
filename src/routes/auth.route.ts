@@ -9,7 +9,10 @@ import {
 import { asyncHandler } from "../utils/asyncHandler";
 
 const router = Router();
-const upload = multer(); // In-memory file storage
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit for avatars
+});
 
 // Public Auth Routes
 router.post(
@@ -70,6 +73,7 @@ router.get(
 router.post(
   "/update-avatar",
   verifyToken,
+  authRateLimiter, // Added for consistency
   upload.single("avatar"),
   asyncHandler(authController.updateUserAvatar)
 );

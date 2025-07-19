@@ -8,60 +8,141 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.mediaService = exports.MediaService = void 0;
 const media_model_1 = require("../models/media.model");
 const mediaInteraction_model_1 = require("../models/mediaInteraction.model");
 const bookmark_model_1 = require("../models/bookmark.model");
+const user_model_1 = require("../models/user.model");
 const mongoose_1 = require("mongoose");
+const fileUpload_service_1 = __importDefault(require("./fileUpload.service"));
 class MediaService {
-    /**
-     * Upload media (audio, video, or e-book)
-     */
     uploadMedia(data) {
         return __awaiter(this, void 0, void 0, function* () {
+            const validMimeTypes = {
+                videos: ["video/mp4", "video/webm", "video/ogg", "video/mpeg"],
+                music: ["audio/mpeg", "audio/wav", "audio/ogg", "audio/mp3"],
+                books: ["application/pdf", "application/epub+zip"],
+                live: [],
+            };
+            if (data.file && data.fileMimeType) {
+                if (!validMimeTypes[data.contentType].includes(data.fileMimeType)) {
+                    throw new Error(`Invalid MIME type ${data.fileMimeType} for content type ${data.contentType}`);
+                }
+            }
+            let fileUrl;
+            if (data.contentType !== "live" && data.file && data.fileMimeType) {
+                try {
+                    const uploadResult = yield fileUpload_service_1.default.uploadMedia(data.file, `media/${data.contentType}`, data.fileMimeType);
+                    fileUrl = uploadResult.secure_url;
+                    if (!fileUrl) {
+                        throw new Error("Cloudinary upload did not return a valid URL");
+                    }
+                }
+                catch (error) {
+                    console.error(`Error uploading ${data.contentType}:`, error);
+                    throw new Error(`Failed to upload ${data.contentType}`);
+                }
+            }
+            else if (data.contentType !== "live") {
+                throw new Error("File is required for non-live content types");
+            }
             const media = new media_model_1.Media({
                 title: data.title,
                 description: data.description,
-                type: data.type,
-                genre: data.genre,
+                contentType: data.contentType,
+                category: data.category,
+                fileUrl,
+                fileMimeType: data.fileMimeType,
+                topics: data.topics || [],
                 uploadedBy: typeof data.uploadedBy === "string"
                     ? new mongoose_1.Types.ObjectId(data.uploadedBy)
                     : data.uploadedBy,
-                fileUrl: data.fileUrl,
-                fileMimeType: data.fileMimeType,
-                tags: data.tags || [],
+                duration: data.duration,
+                isLive: data.isLive,
+                liveStreamStatus: data.liveStreamStatus,
+                streamKey: data.streamKey,
+                rtmpUrl: data.rtmpUrl,
+                playbackUrl: data.playbackUrl,
             });
             yield media.save();
             return media;
         });
     }
-    /**
-     * Get all media with optional filters and pagination
-     */
     getAllMedia() {
         return __awaiter(this, arguments, void 0, function* (filters = {}) {
             const query = {};
             if (filters.search) {
                 query.title = { $regex: filters.search, $options: "i" };
             }
-            if (filters.type) {
-                query.type = {
-                    $in: Array.isArray(filters.type) ? filters.type : [filters.type],
+            if (filters.contentType && filters.contentType !== "devotionals") {
+                const contentTypeMap = {
+                    videos: ["videos"],
+                    sermons: ["videos", "live"],
+                    music: ["music"],
+                    podcasts: ["music"],
+                    books: ["books"],
+                };
+                query.contentType = { $in: contentTypeMap[filters.contentType] || [] };
+                if (filters.contentType === "sermons")
+                    query.category = "sermon";
+                if (filters.contentType === "podcasts")
+                    query.category = "podcast";
+            }
+            if (filters.category) {
+                query.category = { $regex: filters.category, $options: "i" };
+            }
+            if (filters.topics) {
+                const topicsArray = Array.isArray(filters.topics)
+                    ? filters.topics
+                    : filters.topics.split(",");
+                query.topics = {
+                    $in: topicsArray.map((topic) => new RegExp(topic, "i")),
                 };
             }
-            if (filters.genre) {
-                query.genre = { $regex: filters.genre, $options: "i" };
+            if (filters.creator) {
+                const user = yield user_model_1.User.findOne({ username: filters.creator });
+                if (user) {
+                    query.uploadedBy = user._id;
+                }
+                else {
+                    query.uploadedBy = null;
+                }
             }
-            if (filters.tags) {
-                const tagsArray = Array.isArray(filters.tags)
-                    ? filters.tags
-                    : filters.tags.split(",");
-                query.tags = {
-                    $in: tagsArray.map((tag) => new RegExp(tag, "i")),
-                };
+            // Fix TypeScript error by explicitly typing durationRanges
+            const durationRanges = {
+                short: { $lte: 5 * 60 },
+                medium: { $gte: 5 * 60, $lte: 15 * 60 },
+                long: { $gt: 15 * 60 },
+            };
+            if (filters.duration) {
+                const durationKey = filters.duration;
+                if (durationRanges[durationKey]) {
+                    query.duration = durationRanges[durationKey];
+                }
+                else {
+                    query.duration = {};
+                }
             }
-            const sort = filters.sort || "-createdAt";
+            if (filters.startDate || filters.endDate) {
+                query.createdAt = {};
+                if (filters.startDate) {
+                    query.createdAt.$gte = new Date(filters.startDate);
+                }
+                if (filters.endDate) {
+                    query.createdAt.$lte = new Date(filters.endDate);
+                }
+            }
+            let sort = filters.sort || "-createdAt";
+            if (filters.sort === "trending") {
+                const sevenDaysAgo = new Date();
+                sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+                query.createdAt = { $gte: sevenDaysAgo };
+                sort = "-viewCount -listenCount -readCount";
+            }
             const page = parseInt(filters.page) || 1;
             const limit = parseInt(filters.limit) || 10;
             const skip = (page - 1) * limit;
@@ -69,6 +150,7 @@ class MediaService {
                 .sort(sort)
                 .skip(skip)
                 .limit(limit)
+                .populate("uploadedBy", "username")
                 .lean();
             const total = yield media_model_1.Media.countDocuments(query);
             return {
@@ -82,65 +164,70 @@ class MediaService {
             };
         });
     }
-    /**
-     * Get media by ID
-     */
-    getMediaById(mediaId) {
+    getMediaByIdentifier(mediaIdentifier) {
         return __awaiter(this, void 0, void 0, function* () {
-            if (!mongoose_1.Types.ObjectId.isValid(mediaId)) {
-                throw new Error("Invalid media ID");
+            if (!mongoose_1.Types.ObjectId.isValid(mediaIdentifier)) {
+                throw new Error("Invalid media identifier");
             }
-            const media = yield media_model_1.Media.findById(mediaId);
+            const media = yield media_model_1.Media.findById(mediaIdentifier);
             if (!media) {
                 throw new Error("Media not found");
             }
             return media;
         });
     }
-    /**
-     * Delete media by ID (admin or creator only)
-     */
-    deleteMedia(mediaId, userId, userRole) {
+    deleteMedia(mediaIdentifier, userIdentifier, userRole) {
         return __awaiter(this, void 0, void 0, function* () {
-            if (!mongoose_1.Types.ObjectId.isValid(mediaId)) {
-                throw new Error("Invalid media ID");
+            var _a;
+            if (!mongoose_1.Types.ObjectId.isValid(mediaIdentifier)) {
+                throw new Error("Invalid media identifier");
             }
-            const media = yield media_model_1.Media.findById(mediaId);
+            const media = yield media_model_1.Media.findById(mediaIdentifier);
             if (!media) {
                 throw new Error("Media not found");
             }
-            if (media.uploadedBy.toString() !== userId && userRole !== "admin") {
+            if (media.uploadedBy.toString() !== userIdentifier &&
+                userRole !== "admin") {
                 throw new Error("Unauthorized to delete this media");
             }
-            yield media_model_1.Media.findByIdAndDelete(mediaId);
+            // Delete media file from storage if it exists
+            if (media.fileUrl) {
+                try {
+                    const publicId = (_a = media.fileUrl.split("/").pop()) === null || _a === void 0 ? void 0 : _a.split(".")[0];
+                    if (publicId) {
+                        yield fileUpload_service_1.default.deleteMedia(`media-${media.contentType}/${publicId}`, media.contentType);
+                    }
+                }
+                catch (error) {
+                    console.error("Error deleting media file:", error);
+                }
+            }
+            yield media_model_1.Media.findByIdAndDelete(mediaIdentifier);
             return true;
         });
     }
-    /**
-     * Record a media interaction (view, listen, read, download)
-     */
     recordInteraction(data) {
         return __awaiter(this, void 0, void 0, function* () {
-            if (!mongoose_1.Types.ObjectId.isValid(data.userId) ||
-                !mongoose_1.Types.ObjectId.isValid(data.mediaId)) {
-                throw new Error("Invalid user or media ID");
+            if (!mongoose_1.Types.ObjectId.isValid(data.userIdentifier) ||
+                !mongoose_1.Types.ObjectId.isValid(data.mediaIdentifier)) {
+                throw new Error("Invalid user or media identifier");
             }
-            const media = yield media_model_1.Media.findById(data.mediaId);
+            const media = yield media_model_1.Media.findById(data.mediaIdentifier);
             if (!media) {
                 throw new Error("Media not found");
             }
-            if ((media.type === "video" && data.interactionType !== "view") ||
-                (media.type === "audio" && data.interactionType !== "listen") ||
-                (media.type === "ebook" &&
+            if ((media.contentType === "videos" && data.interactionType !== "view") ||
+                (media.contentType === "music" && data.interactionType !== "listen") ||
+                (media.contentType === "books" &&
                     !["read", "download"].includes(data.interactionType))) {
-                throw new Error(`Invalid interaction type for ${media.type} media`);
+                throw new Error(`Invalid interaction type ${data.interactionType} for ${media.contentType} media`);
             }
             const session = yield media_model_1.Media.startSession();
             try {
-                yield session.withTransaction(() => __awaiter(this, void 0, void 0, function* () {
+                const interaction = yield session.withTransaction(() => __awaiter(this, void 0, void 0, function* () {
                     const existingInteraction = yield mediaInteraction_model_1.MediaInteraction.findOne({
-                        user: new mongoose_1.Types.ObjectId(data.userId),
-                        media: new mongoose_1.Types.ObjectId(data.mediaId),
+                        user: new mongoose_1.Types.ObjectId(data.userIdentifier),
+                        media: new mongoose_1.Types.ObjectId(data.mediaIdentifier),
                         interactionType: data.interactionType,
                     }).session(session);
                     if (existingInteraction) {
@@ -148,8 +235,8 @@ class MediaService {
                     }
                     const interaction = yield mediaInteraction_model_1.MediaInteraction.create([
                         {
-                            user: new mongoose_1.Types.ObjectId(data.userId),
-                            media: new mongoose_1.Types.ObjectId(data.mediaId),
+                            user: new mongoose_1.Types.ObjectId(data.userIdentifier),
+                            media: new mongoose_1.Types.ObjectId(data.mediaIdentifier),
                             interactionType: data.interactionType,
                         },
                     ], { session });
@@ -162,14 +249,9 @@ class MediaService {
                         updateField.readCount = 1;
                     if (data.interactionType === "download")
                         updateField.downloadCount = 1;
-                    yield media_model_1.Media.findByIdAndUpdate(data.mediaId, { $inc: updateField }, { session });
+                    yield media_model_1.Media.findByIdAndUpdate(data.mediaIdentifier, { $inc: updateField }, { session });
                     return interaction[0];
                 }));
-                const interaction = yield mediaInteraction_model_1.MediaInteraction.findOne({
-                    user: new mongoose_1.Types.ObjectId(data.userId),
-                    media: new mongoose_1.Types.ObjectId(data.mediaId),
-                    interactionType: data.interactionType,
-                });
                 return interaction;
             }
             finally {
@@ -177,64 +259,56 @@ class MediaService {
             }
         });
     }
-    /**
-     * Get interaction counts for a media item
-     */
-    getInteractionCounts(mediaId) {
+    getInteractionCounts(mediaIdentifier) {
         return __awaiter(this, void 0, void 0, function* () {
-            if (!mongoose_1.Types.ObjectId.isValid(mediaId)) {
-                throw new Error("Invalid media ID");
+            if (!mongoose_1.Types.ObjectId.isValid(mediaIdentifier)) {
+                throw new Error("Invalid media identifier");
             }
-            const media = yield media_model_1.Media.findById(mediaId).select("type viewCount listenCount readCount downloadCount");
+            const media = yield media_model_1.Media.findById(mediaIdentifier).select("contentType viewCount listenCount readCount downloadCount");
             if (!media) {
                 throw new Error("Media not found");
             }
             const result = {};
-            if (media.type === "video")
+            if (media.contentType === "videos")
                 result.viewCount = media.viewCount;
-            if (media.type === "audio")
+            if (media.contentType === "music")
                 result.listenCount = media.listenCount;
-            if (media.type === "ebook") {
+            if (media.contentType === "books") {
                 result.readCount = media.readCount;
                 result.downloadCount = media.downloadCount;
             }
             return result;
         });
     }
-    /**
-     * Get media count by type (admin)
-     */
-    getMediaCountByType() {
+    getMediaCountByContentType() {
         return __awaiter(this, void 0, void 0, function* () {
             const result = yield media_model_1.Media.aggregate([
                 {
                     $group: {
-                        _id: "$type",
+                        _id: "$contentType",
                         count: { $sum: 1 },
                     },
                 },
                 {
                     $project: {
-                        type: "$_id",
+                        contentType: "$_id",
                         count: 1,
                         _id: 0,
                     },
                 },
             ]);
             const counts = {
-                audio: 0,
-                video: 0,
-                ebook: 0,
+                music: 0,
+                videos: 0,
+                books: 0,
+                live: 0,
             };
             result.forEach((item) => {
-                counts[item.type] = item.count;
+                counts[item.contentType] = item.count;
             });
             return counts;
         });
     }
-    /**
-     * Get total interaction counts (admin)
-     */
     getTotalInteractionCounts() {
         return __awaiter(this, void 0, void 0, function* () {
             var _a, _b, _c, _d;
@@ -257,86 +331,72 @@ class MediaService {
             };
         });
     }
-    /**
-     * Get recent media (admin)
-     */
     getRecentMedia(limit) {
         return __awaiter(this, void 0, void 0, function* () {
             return yield media_model_1.Media.find()
                 .sort({ createdAt: -1 })
                 .limit(limit)
-                .select("title type genre createdAt")
+                .select("title contentType category createdAt")
                 .lean();
         });
     }
-    /**
-     * Get media count since date (admin)
-     */
-    getMediaCountByDate(since) {
+    getMediaCountSinceDate(since) {
         return __awaiter(this, void 0, void 0, function* () {
             return yield media_model_1.Media.countDocuments({
                 createdAt: { $gte: since },
             });
         });
     }
-    /**
-     * Get interaction count since date (admin)
-     */
-    getInteractionCountByDate(since) {
+    getInteractionCountSinceDate(since) {
         return __awaiter(this, void 0, void 0, function* () {
             return yield mediaInteraction_model_1.MediaInteraction.countDocuments({
                 createdAt: { $gte: since },
             });
         });
     }
-    /**
-     * Get user media count by type
-     */
-    getUserMediaCountByType(userId) {
+    getUserMediaCountByContentType(userIdentifier) {
         return __awaiter(this, void 0, void 0, function* () {
-            if (!mongoose_1.Types.ObjectId.isValid(userId)) {
-                throw new Error("Invalid user ID");
+            if (!mongoose_1.Types.ObjectId.isValid(userIdentifier)) {
+                throw new Error("Invalid user identifier");
             }
             const result = yield media_model_1.Media.aggregate([
                 {
-                    $match: { uploadedBy: new mongoose_1.Types.ObjectId(userId) },
+                    $match: { uploadedBy: new mongoose_1.Types.ObjectId(userIdentifier) },
                 },
                 {
                     $group: {
-                        _id: "$type",
+                        _id: "$contentType",
                         count: { $sum: 1 },
                     },
                 },
                 {
                     $project: {
-                        type: "$_id",
+                        contentType: "$_id",
                         count: 1,
                         _id: 0,
                     },
                 },
             ]);
             const counts = {
-                audio: 0,
-                video: 0,
-                ebook: 0,
+                music: 0,
+                videos: 0,
+                books: 0,
+                live: 0,
             };
             result.forEach((item) => {
-                counts[item.type] = item.count;
+                counts[item.contentType] = item.count;
             });
             return counts;
         });
     }
-    /**
-     * Get user interaction counts
-     */
-    getUserInteractionCounts(userId) {
+    getUserInteractionCounts(userIdentifier) {
         return __awaiter(this, void 0, void 0, function* () {
-            if (!mongoose_1.Types.ObjectId.isValid(userId)) {
-                throw new Error("Invalid user ID");
+            if (!mongoose_1.Types.ObjectId.isValid(userIdentifier)) {
+                throw new Error("Invalid user identifier");
             }
             const result = yield mediaInteraction_model_1.MediaInteraction.aggregate([
                 {
-                    $match: { user: new mongoose_1.Types.ObjectId(userId) },
+                    $match: { user: new mongoose_1.Types.ObjectId(userIdentifier) },
                 },
                 {
                     $group: {
@@ -371,60 +431,48 @@ class MediaService {
             return counts;
         });
     }
-    /**
-     * Get user bookmark count
-     */
-    getUserBookmarkCount(userId) {
+    getUserBookmarkCount(userIdentifier) {
         return __awaiter(this, void 0, void 0, function* () {
-            if (!mongoose_1.Types.ObjectId.isValid(userId)) {
-                throw new Error("Invalid user ID");
+            if (!mongoose_1.Types.ObjectId.isValid(userIdentifier)) {
+                throw new Error("Invalid user identifier");
             }
             return yield bookmark_model_1.Bookmark.countDocuments({
-                user: new mongoose_1.Types.ObjectId(userId),
+                user: new mongoose_1.Types.ObjectId(userIdentifier),
             });
         });
     }
-    /**
-     * Get user recent media
-     */
-    getUserRecentMedia(userId, limit) {
+    getUserRecentMedia(userIdentifier, limit) {
         return __awaiter(this, void 0, void 0, function* () {
-            if (!mongoose_1.Types.ObjectId.isValid(userId)) {
-                throw new Error("Invalid user ID");
+            if (!mongoose_1.Types.ObjectId.isValid(userIdentifier)) {
+                throw new Error("Invalid user identifier");
             }
             return yield media_model_1.Media.find({
-                uploadedBy: new mongoose_1.Types.ObjectId(userId),
+                uploadedBy: new mongoose_1.Types.ObjectId(userIdentifier),
             })
                 .sort({ createdAt: -1 })
                 .limit(limit)
-                .select("title type genre createdAt")
+                .select("title contentType category createdAt")
                 .lean();
         });
     }
-    /**
-     * Get user media count since date
-     */
-    getUserMediaCountByDate(userId, since) {
+    getUserMediaCountSinceDate(userIdentifier, since) {
         return __awaiter(this, void 0, void 0, function* () {
-            if (!mongoose_1.Types.ObjectId.isValid(userId)) {
-                throw new Error("Invalid user ID");
+            if (!mongoose_1.Types.ObjectId.isValid(userIdentifier)) {
+                throw new Error("Invalid user identifier");
             }
             return yield media_model_1.Media.countDocuments({
-                uploadedBy: new mongoose_1.Types.ObjectId(userId),
+                uploadedBy: new mongoose_1.Types.ObjectId(userIdentifier),
                 createdAt: { $gte: since },
             });
         });
     }
-    /**
-     * Get user interaction count since date
-     */
-    getUserInteractionCountByDate(userId, since) {
+    getUserInteractionCountSinceDate(userIdentifier, since) {
         return __awaiter(this, void 0, void 0, function* () {
-            if (!mongoose_1.Types.ObjectId.isValid(userId)) {
-                throw new Error("Invalid user ID");
+            if (!mongoose_1.Types.ObjectId.isValid(userIdentifier)) {
+                throw new Error("Invalid user identifier");
             }
             return yield mediaInteraction_model_1.MediaInteraction.countDocuments({
-                user: new mongoose_1.Types.ObjectId(userId),
+                user: new mongoose_1.Types.ObjectId(userIdentifier),
                 createdAt: { $gte: since },
             });
         });

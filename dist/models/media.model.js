@@ -46,25 +46,51 @@ const mediaSchema = new mongoose_1.Schema({
         type: String,
         trim: true,
     },
-    type: {
+    contentType: {
         type: String,
-        enum: ["audio", "video", "ebook"],
+        enum: ["music", "videos", "books", "live"],
         required: true,
     },
-    genre: {
+    category: {
         type: String,
         trim: true,
+        enum: [
+            "worship",
+            "inspiration",
+            "youth",
+            "teachings",
+            "marriage",
+            "counselling",
+        ],
     },
     fileUrl: {
         type: String,
-        required: true,
+        required: function () {
+            return this.contentType !== "live";
+        },
     },
     fileMimeType: {
         type: String,
     },
-    tags: {
+    topics: {
         type: [String],
         default: [],
+        validate: {
+            validator: function (tags) {
+                const allowedTopics = [
+                    "faith",
+                    "healing",
+                    "grace",
+                    "prayer",
+                    "maturity",
+                    "spiritual growth",
+                    "worship",
+                    "inspiration",
+                ];
+                return tags.every((tag) => allowedTopics.includes(tag.toLowerCase()));
+            },
+            message: (props) => `Invalid topics: ${props.value}`,
+        },
     },
     uploadedBy: {
         type: mongoose_1.Schema.Types.ObjectId,
@@ -87,8 +113,55 @@ const mediaSchema = new mongoose_1.Schema({
         type: Number,
         default: 0,
     },
+    isLive: {
+        type: Boolean,
+        default: false,
+    },
+    liveStreamStatus: {
+        type: String,
+        enum: ["scheduled", "live", "ended", "archived"],
+    },
+    streamKey: {
+        type: String,
+        unique: true,
+        sparse: true,
+    },
+    playbackUrl: {
+        type: String,
+    },
+    rtmpUrl: {
+        type: String,
+    },
+    scheduledStart: {
+        type: Date,
+    },
+    scheduledEnd: {
+        type: Date,
+    },
+    actualStart: {
+        type: Date,
+    },
+    actualEnd: {
+        type: Date,
+    },
+    concurrentViewers: {
+        type: Number,
+        default: 0,
+    },
+    duration: {
+        type: Number,
+        min: 0,
+    },
 }, {
     timestamps: true,
 });
-// Export the model
+// Indexes for faster queries
+mediaSchema.index({ isLive: 1, liveStreamStatus: 1 });
+mediaSchema.index({
+    title: "text",
+    category: 1,
+    contentType: 1,
+    uploadedBy: 1,
+    createdAt: 1,
+});
 exports.Media = mongoose_1.default.models.Media || mongoose_1.default.model("Media", mediaSchema);

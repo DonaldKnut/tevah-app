@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import authService from "../service/auth.service";
 import { VALID_INTERESTS } from "../constants/interests";
 import { User } from "../models/user.model";
+import multer from "multer";
 
 class AuthController {
   async clerkLogin(request: Request, response: Response, next: NextFunction) {
@@ -115,13 +116,22 @@ class AuthController {
         });
       }
 
+      const validImageMimeTypes = ["image/jpeg", "image/png", "image/gif"];
+      if (!validImageMimeTypes.includes(avatarFile.mimetype)) {
+        return response.status(400).json({
+          success: false,
+          message: `Invalid image type: ${avatarFile.mimetype}`,
+        });
+      }
+
       const user = await authService.registerUser(
         email,
         password,
         firstName,
         lastName,
         desiredRole,
-        avatarFile.buffer
+        avatarFile.buffer,
+        avatarFile.mimetype
       );
 
       return response.status(201).json({
@@ -472,9 +482,18 @@ class AuthController {
         });
       }
 
+      const validImageMimeTypes = ["image/jpeg", "image/png", "image/gif"];
+      if (!validImageMimeTypes.includes(avatarFile.mimetype)) {
+        return response.status(400).json({
+          success: false,
+          message: `Invalid image type: ${avatarFile.mimetype}`,
+        });
+      }
+
       const updateResult = await authService.updateUserAvatar(
         userId,
-        avatarFile.buffer
+        avatarFile.buffer,
+        avatarFile.mimetype
       );
 
       return response.status(200).json({
@@ -487,6 +506,33 @@ class AuthController {
         return response.status(404).json({
           success: false,
           message: error.message,
+        });
+      }
+      if (
+        error instanceof Error &&
+        error.message.startsWith("Invalid image type")
+      ) {
+        return response.status(400).json({
+          success: false,
+          message: error.message,
+        });
+      }
+      if (
+        error instanceof multer.MulterError &&
+        error.code === "LIMIT_UNEXPECTED_FILE"
+      ) {
+        return response.status(400).json({
+          success: false,
+          message: `Unexpected field in file upload. Expected field name: 'avatar'`,
+        });
+      }
+      if (
+        error instanceof multer.MulterError &&
+        error.code === "LIMIT_FILE_SIZE"
+      ) {
+        return response.status(400).json({
+          success: false,
+          message: "File size exceeds the 5MB limit",
         });
       }
       return next(error);

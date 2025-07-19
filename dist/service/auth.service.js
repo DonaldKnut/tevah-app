@@ -18,7 +18,7 @@ const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const user_model_1 = require("../models/user.model");
 const mailer_1 = require("../utils/mailer");
 const clerk_1 = require("../utils/clerk");
-const fileUpload_service_1 = __importDefault(require("../utils/fileUpload.service"));
+const fileUpload_service_1 = __importDefault(require("./fileUpload.service"));
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
     throw new Error("JWT_SECRET is not defined in environment variables");
@@ -124,7 +124,7 @@ class AuthService {
             };
         });
     }
-    registerUser(email, password, firstName, lastName, desiredRole, avatarBuffer) {
+    registerUser(email, password, firstName, lastName, desiredRole, avatarBuffer, avatarMimeType) {
         return __awaiter(this, void 0, void 0, function* () {
             const existingUser = yield user_model_1.User.findOne({ email });
             if (existingUser) {
@@ -149,8 +149,14 @@ class AuthService {
             const hashedPassword = yield bcrypt_1.default.hash(password, 10);
             const verificationFlags = this.setVerificationFlags(role);
             let avatarUrl;
-            if (avatarBuffer) {
-                avatarUrl = yield fileUpload_service_1.default.uploadImage(avatarBuffer, "user-avatars");
+            if (avatarBuffer && avatarMimeType) {
+                const validImageMimeTypes = ["image/jpeg", "image/png", "image/gif"];
+                if (!validImageMimeTypes.includes(avatarMimeType)) {
+                    throw new Error(`Invalid image type: ${avatarMimeType}`);
+                }
+                const uploadResult = yield fileUpload_service_1.default.uploadMedia(avatarBuffer, "user-avatars", avatarMimeType);
+                console.log("Avatar Upload Result:", uploadResult); // Debug log
+                avatarUrl = uploadResult.secure_url;
             }
             const newUser = yield user_model_1.User.create(Object.assign({ email,
                 firstName,
@@ -256,9 +262,20 @@ class AuthService {
             if (!currentUser) {
                 throw new Error("User not found");
             }
+            // Determine section and isKid based on age, overriding provided section if inconsistent
             let userSection = section;
-            if (!userSection) {
-                userSection = age < 13 ? "kids" : "adults";
+            let isKid;
+            if (age < 18) {
+                userSection = "kids";
+                isKid = true;
+            }
+            else {
+                userSection = "adults";
+                isKid = false;
+            }
+            // Validate provided section if present
+            if (section && section !== userSection) {
+                throw new Error(`Provided section '${section}' is invalid for age ${age}. Age ${age} requires section '${userSection}'.`);
             }
             let role = currentUser.role;
             if (currentUser.role === "learner" && desiredRole) {
@@ -276,7 +293,8 @@ class AuthService {
             }
             const verificationFlags = role !== currentUser.role ? this.setVerificationFlags(role) : {};
             const updateData = Object.assign({ age,
-                location, section: userSection, isKid: userSection === "kids", role,
+                location, section: userSection, isKid,
+                role,
                 hasConsentedToPrivacyPolicy, isProfileComplete: true }, verificationFlags);
             if (interests && Array.isArray(interests)) {
                 updateData.interests = interests;
@@ -292,11 +310,18 @@ class AuthService {
     }
     getCurrentUser(userId) {
         return __awaiter(this, void 0, void 0, function* () {
-            const user = yield user_model_1.User.findById(userId).select("email firstName lastName avatar isProfileComplete role section interests");
+            const user = yield user_model_1.User.findById(userId).select("firstName lastName avatar avatarUpload section");
             if (!user) {
                 throw new Error("User not found");
             }
-            return user;
+            // Prefer `avatar`, fallback to `avatarUpload` if needed
+            const avatar = user.avatar || user.avatarUpload || null;
+            return {
+                firstName: user.firstName,
+                lastName: user.lastName,
+                avatar,
+                section: user.section || "adults",
+            };
         });
     }
     getUserSession(userId) {
@@ -315,26 +340,35 @@ class AuthService {
             };
         });
     }
-    updateUserAvatar(userId, avatarBuffer) {
+    updateUserAvatar(userId, avatarBuffer, mimetype) {
         return __awaiter(this, void 0, void 0, function* () {
             var _a;
             const user = yield user_model_1.User.findById(userId);
             if (!user) {
                 throw new Error("User not found");
             }
+            // Delete previous avatar from Cloudinary if exists
             if (user.avatar) {
                 try {
                     const publicId = (_a = user.avatar.split("/").pop()) === null || _a === void 0 ? void 0 : _a.split(".")[0];
                     if (publicId) {
-                        yield fileUpload_service_1.default.deleteImage(`user-avatars/${publicId}`);
+                        yield fileUpload_service_1.default.deleteMedia(`user-avatars/${publicId}`, "image");
                     }
                 }
                 catch (error) {
                     console.error("Error deleting old avatar:", error);
                 }
             }
-            const avatarUrl = yield fileUpload_service_1.default.uploadImage(avatarBuffer, "user-avatars");
-            user.avatar = avatarUrl;
+            // Validate MIME type
+            const validImageMimeTypes = ["image/jpeg", "image/png", "image/gif"];
+            if (!validImageMimeTypes.includes(mimetype)) {
+                throw new Error(`Invalid image type: ${mimetype}`);
+            }
+            // Upload new avatar
+            const uploadResult = yield fileUpload_service_1.default.uploadMedia(avatarBuffer, "user-avatars", mimetype);
+            console.log("Avatar Upload Result:", uploadResult); // Debug log
+            // Assign only the secure_url string
+            user.avatar = uploadResult.secure_url;
             yield user.save();
             return {
                 avatarUrl: user.avatar,

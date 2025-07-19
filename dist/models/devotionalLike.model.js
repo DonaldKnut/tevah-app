@@ -33,43 +33,25 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.Devotional = void 0;
+exports.DevotionalLike = void 0;
 const mongoose_1 = __importStar(require("mongoose"));
 // Mongoose schema definition
-const devotionalSchema = new mongoose_1.Schema({
-    title: {
-        type: String,
-        required: true,
-        trim: true,
-    },
-    content: {
-        type: String,
-        required: true,
-    },
-    scriptureReference: {
-        type: String,
-        trim: true,
-    },
-    author: {
-        type: String,
-        trim: true,
-    },
-    submittedBy: {
+const devotionalLikeSchema = new mongoose_1.Schema({
+    user: {
         type: mongoose_1.Schema.Types.ObjectId,
         ref: "User",
         required: true,
     },
-    tags: {
-        type: [String],
-        default: [],
-    },
-    likeCount: {
-        type: Number,
-        default: 0,
+    devotional: {
+        type: mongoose_1.Schema.Types.ObjectId,
+        ref: "Devotional",
+        required: true,
     },
 }, {
-    timestamps: true,
+    timestamps: { createdAt: true, updatedAt: false },
 });
+// Unique index to prevent multiple likes by the same user
+devotionalLikeSchema.index({ user: 1, devotional: 1 }, { unique: true });
 // Export model
-exports.Devotional = mongoose_1.default.models.Devotional ||
-    mongoose_1.default.model("Devotional", devotionalSchema);
+exports.DevotionalLike = mongoose_1.default.models.DevotionalLike ||
+    mongoose_1.default.model("DevotionalLike", devotionalLikeSchema);

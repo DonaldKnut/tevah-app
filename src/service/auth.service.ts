@@ -4,7 +4,7 @@ import jwt from "jsonwebtoken";
 import { User } from "../models/user.model";
 import { sendVerificationEmail, sendWelcomeEmail } from "../utils/mailer";
 import { verifyClerkToken } from "../utils/clerk";
-import fileUploadService from "../utils/fileUpload.service";
+import fileUploadService from "./fileUpload.service";
 
 const JWT_SECRET = process.env.JWT_SECRET as string;
 if (!JWT_SECRET) {
@@ -131,7 +131,8 @@ class AuthService {
     firstName: string,
     lastName?: string,
     desiredRole?: string,
-    avatarBuffer?: Buffer
+    avatarBuffer?: Buffer,
+    avatarMimeType?: string
   ) {
     const existingUser = await User.findOne({ email });
     if (existingUser) {
@@ -161,11 +162,17 @@ class AuthService {
 
     const verificationFlags = this.setVerificationFlags(role);
     let avatarUrl: string | undefined;
-    if (avatarBuffer) {
-      const uploadResult = await fileUploadService.uploadImage(
+    if (avatarBuffer && avatarMimeType) {
+      const validImageMimeTypes = ["image/jpeg", "image/png", "image/gif"];
+      if (!validImageMimeTypes.includes(avatarMimeType)) {
+        throw new Error(`Invalid image type: ${avatarMimeType}`);
+      }
+      const uploadResult = await fileUploadService.uploadMedia(
         avatarBuffer,
-        "user-avatars"
+        "user-avatars",
+        avatarMimeType
       );
+      console.log("Avatar Upload Result:", uploadResult); // Debug log
       avatarUrl = uploadResult.secure_url;
     }
 
@@ -318,9 +325,23 @@ class AuthService {
       throw new Error("User not found");
     }
 
+    // Determine section and isKid based on age, overriding provided section if inconsistent
     let userSection = section;
-    if (!userSection) {
-      userSection = age < 13 ? "kids" : "adults";
+    let isKid: boolean;
+
+    if (age < 18) {
+      userSection = "kids";
+      isKid = true;
+    } else {
+      userSection = "adults";
+      isKid = false;
+    }
+
+    // Validate provided section if present
+    if (section && section !== userSection) {
+      throw new Error(
+        `Provided section '${section}' is invalid for age ${age}. Age ${age} requires section '${userSection}'.`
+      );
     }
 
     let role = currentUser.role;
@@ -345,7 +366,7 @@ class AuthService {
       age,
       location,
       section: userSection,
-      isKid: userSection === "kids",
+      isKid,
       role,
       hasConsentedToPrivacyPolicy,
       isProfileComplete: true,
@@ -369,14 +390,22 @@ class AuthService {
 
   async getCurrentUser(userId: string) {
     const user = await User.findById(userId).select(
-      "email firstName lastName avatar isProfileComplete role section interests"
+      "firstName lastName avatar avatarUpload section"
     );
 
     if (!user) {
       throw new Error("User not found");
     }
 
-    return user;
+    // Prefer `avatar`, fallback to `avatarUpload` if needed
+    const avatar = user.avatar || user.avatarUpload || null;
+
+    return {
+      firstName: user.firstName,
+      lastName: user.lastName,
+      avatar,
+      section: user.section || "adults",
+    };
   }
 
   async getUserSession(userId: string) {
@@ -398,7 +427,11 @@ class AuthService {
     };
   }
 
-  async updateUserAvatar(userId: string, avatarBuffer: Buffer) {
+  async updateUserAvatar(
+    userId: string,
+    avatarBuffer: Buffer,
+    mimetype: string
+  ) {
     const user = await User.findById(userId);
     if (!user) {
       throw new Error("User not found");
@@ -419,13 +452,21 @@ class AuthService {
       }
     }
 
-    // Upload new avatar
-    const uploadResult = await fileUploadService.uploadImage(
-      avatarBuffer,
-      "user-avatars"
-    );
+    // Validate MIME type
+    const validImageMimeTypes = ["image/jpeg", "image/png", "image/gif"];
+    if (!validImageMimeTypes.includes(mimetype)) {
+      throw new Error(`Invalid image type: ${mimetype}`);
+    }
 
-    // ✅ Assign only the secure_url string
+    // Upload new avatar
+    const uploadResult = await fileUploadService.uploadMedia(
+      avatarBuffer,
+      "user-avatars",
+      mimetype
+    );
+    console.log("Avatar Upload Result:", uploadResult); // Debug log
+
+    // Assign only the secure_url string
     user.avatar = uploadResult.secure_url;
 
     await user.save();

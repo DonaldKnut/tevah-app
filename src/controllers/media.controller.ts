@@ -1,11 +1,12 @@
 import { Request, Response } from "express";
-import fileUploadService from "../utils/fileUpload.service";
+import fileUploadService from "../service/fileUpload.service";
 import { mediaService } from "../service/media.service";
 import { Bookmark } from "../models/bookmark.model";
 import { Types } from "mongoose";
 import Mux from "@mux/mux-node";
 import { Media } from "../models/media.model";
 import { v2 as cloudinary } from "cloudinary";
+import multer from "multer";
 
 const mux = new Mux({
   tokenId: process.env.MUX_TOKEN_ID!,
@@ -138,6 +139,22 @@ export const uploadMedia = async (
       request.body as UploadMediaRequestBody;
     const file = request.file;
 
+    console.log("Request File:", {
+      fileExists: !!file,
+      bufferExists: !!file?.buffer,
+      mimetype: file?.mimetype,
+      originalname: file?.originalname,
+      size: file?.size,
+    }); // Debug log
+
+    if (!["music", "videos", "books"].includes(contentType)) {
+      response.status(400).json({
+        success: false,
+        message: "Invalid content type. Must be music, videos, or books",
+      });
+      return;
+    }
+
     if (!file || !file.buffer) {
       response.status(400).json({
         success: false,
@@ -162,28 +179,9 @@ export const uploadMedia = async (
     if (!allowedMimeTypes[contentType].includes(file.mimetype)) {
       response.status(400).json({
         success: false,
-        message: `Invalid file type for ${contentType}`,
+        message: `Invalid file type for ${contentType}: ${file.mimetype}`,
       });
       return;
-    }
-
-    const cloudinaryResult = await fileUploadService.uploadMedia(
-      file.buffer,
-      `media/${contentType}`,
-      file.mimetype
-    );
-
-    let finalDuration = duration;
-    if ((contentType === "videos" || contentType === "music") && !duration) {
-      if (cloudinaryResult.public_id) {
-        const resource = await cloudinary.api.resource(
-          cloudinaryResult.public_id,
-          {
-            resource_type: contentType === "videos" ? "video" : "audio",
-          }
-        );
-        finalDuration = resource.duration;
-      }
     }
 
     const media = await mediaService.uploadMedia({
@@ -191,11 +189,11 @@ export const uploadMedia = async (
       description,
       contentType,
       category,
-      fileUrl: cloudinaryResult.secure_url,
-      fileMimeType: file.mimetype,
+      file: file.buffer, // Pass the file buffer
+      fileMimeType: file.mimetype, // Pass the MIME type
       uploadedBy: new Types.ObjectId(request.userId),
       topics: topics ? JSON.parse(topics) : [],
-      duration: finalDuration,
+      duration,
     });
 
     response.status(201).json({
@@ -205,9 +203,19 @@ export const uploadMedia = async (
     });
   } catch (error: any) {
     console.error("Upload media error:", error);
+    if (
+      error instanceof multer.MulterError &&
+      error.code === "LIMIT_UNEXPECTED_FILE"
+    ) {
+      response.status(400).json({
+        success: false,
+        message: `Unexpected field in file upload. Expected field name: 'file'`,
+      });
+      return;
+    }
     response.status(500).json({
       success: false,
-      message: "Failed to upload media",
+      message: `Failed to upload media: ${error.message}`,
     });
   }
 };

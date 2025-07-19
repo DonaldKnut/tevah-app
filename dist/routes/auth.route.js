@@ -10,7 +10,10 @@ const auth_middleware_1 = require("../middleware/auth.middleware");
 const rateLimiter_1 = require("../middleware/rateLimiter");
 const asyncHandler_1 = require("../utils/asyncHandler");
 const router = (0, express_1.Router)();
-const upload = (0, multer_1.default)(); // In-memory file storage
+const upload = (0, multer_1.default)({
+    storage: multer_1.default.memoryStorage(),
+    limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit for avatars
+});
 // Public Auth Routes
 router.post("/clerk-login", rateLimiter_1.authRateLimiter, (0, asyncHandler_1.asyncHandler)(auth_controller_1.default.clerkLogin));
 router.post("/oauth-login", rateLimiter_1.authRateLimiter, (0, asyncHandler_1.asyncHandler)(auth_controller_1.default.oauthLogin));
@@ -25,5 +28,6 @@ router.post("/complete-profile", auth_middleware_1.verifyToken, (0, asyncHandler
 router.get("/me", auth_middleware_1.verifyToken, (0, asyncHandler_1.asyncHandler)(auth_controller_1.default.getCurrentUser));
 router.get("/session", auth_middleware_1.verifyToken, (0, asyncHandler_1.asyncHandler)(auth_controller_1.default.getUserSession));
 // Avatar Upload Endpoint
-router.post("/update-avatar", auth_middleware_1.verifyToken, upload.single("avatar"), (0, asyncHandler_1.asyncHandler)(auth_controller_1.default.updateUserAvatar));
+router.post("/update-avatar", auth_middleware_1.verifyToken, rateLimiter_1.authRateLimiter, // Added for consistency
+upload.single("avatar"), (0, asyncHandler_1.asyncHandler)(auth_controller_1.default.updateUserAvatar));
 exports.default = router;

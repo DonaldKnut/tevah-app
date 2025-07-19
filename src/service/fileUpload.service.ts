@@ -1,7 +1,6 @@
 import { v2 as cloudinary, UploadApiResponse } from "cloudinary";
 import { Readable } from "stream";
 
-// Configure Cloudinary
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
@@ -21,7 +20,7 @@ class FileUploadService {
       const uploadStream = cloudinary.uploader.upload_stream(
         {
           folder: folderPath,
-          resource_type: isVideoOrAudio ? "video" : "auto",
+          resource_type: isVideoOrAudio ? "video" : "auto", // ✅ audio treated as video
         },
         (error, uploadResult?: UploadApiResponse) => {
           if (error) {
@@ -47,13 +46,6 @@ class FileUploadService {
       stream.push(null);
       stream.pipe(uploadStream);
     });
-  }
-
-  async uploadImage(
-    fileBuffer: Buffer,
-    folderPath: string = "avatars"
-  ): Promise<UploadApiResponse> {
-    return this.uploadMedia(fileBuffer, folderPath, "image/jpeg");
   }
 
   async deleteMedia(

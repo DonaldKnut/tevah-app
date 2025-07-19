@@ -3,6 +3,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.VALID_INTERESTS = void 0;
 exports.VALID_INTERESTS = [
     "Gospel playlists",
+    "Music",
+    "Podcasts",
+    "Games",
     "Sermons",
     "Community",
     "Prayer wall & pray for me",
