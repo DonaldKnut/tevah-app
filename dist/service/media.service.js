@@ -17,21 +17,26 @@ const media_model_1 = require("../models/media.model");
 const mediaInteraction_model_1 = require("../models/mediaInteraction.model");
 const bookmark_model_1 = require("../models/bookmark.model");
 const user_model_1 = require("../models/user.model");
+const userViewedMedia_model_1 = require("../models/userViewedMedia.model"); // New import
+const mediaUserAction_model_1 = require("../models/mediaUserAction.model"); // New import
 const mongoose_1 = require("mongoose");
 const fileUpload_service_1 = __importDefault(require("./fileUpload.service"));
 class MediaService {
     uploadMedia(data) {
         return __awaiter(this, void 0, void 0, function* () {
             const validMimeTypes = {
-                videos: ["video/mp4", "video/webm", "video/ogg", "video/mpeg"],
-                music: ["audio/mpeg", "audio/wav", "audio/ogg", "audio/mp3"],
+                videos: ["video/mp4", "video/webm", "video/ogg"],
+                music: ["audio/mpeg", "audio/mp3", "audio/wav", "audio/ogg"],
                 books: ["application/pdf", "application/epub+zip"],
                 live: [],
             };
-            if (data.file && data.fileMimeType) {
+            if (data.contentType !== "live" && data.file && data.fileMimeType) {
                 if (!validMimeTypes[data.contentType].includes(data.fileMimeType)) {
                     throw new Error(`Invalid MIME type ${data.fileMimeType} for content type ${data.contentType}`);
                 }
+            }
+            else if (data.contentType !== "live" && !data.file) {
+                throw new Error("File is required for non-live content types");
             }
             let fileUrl;
             if (data.contentType !== "live" && data.file && data.fileMimeType) {
@@ -46,9 +51,6 @@ class MediaService {
                     console.error(`Error uploading ${data.contentType}:`, error);
                     throw new Error(`Failed to upload ${data.contentType}`);
                 }
-            }
-            else if (data.contentType !== "live") {
-                throw new Error("File is required for non-live content types");
             }
             const media = new media_model_1.Media({
                 title: data.title,
@@ -67,6 +69,12 @@ class MediaService {
                 streamKey: data.streamKey,
                 rtmpUrl: data.rtmpUrl,
                 playbackUrl: data.playbackUrl,
+                viewCount: 0,
+                listenCount: 0,
+                readCount: 0,
+                downloadCount: 0,
+                favoriteCount: 0, // Initialize new field
+                shareCount: 0, // Initialize new field
             });
             yield media.save();
             return media;
@@ -112,7 +120,6 @@ class MediaService {
                     query.uploadedBy = null;
                 }
             }
-            // Fix TypeScript error by explicitly typing durationRanges
             const durationRanges = {
                 short: { $lte: 5 * 60 },
                 medium: { $gte: 5 * 60, $lte: 15 * 60 },
@@ -190,12 +197,13 @@ class MediaService {
                 userRole !== "admin") {
                 throw new Error("Unauthorized to delete this media");
             }
-            // Delete media file from storage if it exists
             if (media.fileUrl) {
                 try {
                     const publicId = (_a = media.fileUrl.split("/").pop()) === null || _a === void 0 ? void 0 : _a.split(".")[0];
                     if (publicId) {
-                        yield fileUpload_service_1.default.deleteMedia(`media-${media.contentType}/${publicId}`, media.contentType);
+                        yield fileUpload_service_1.default.deleteMedia(`media/${media.contentType}/${publicId}`, media.contentType === "videos" || media.contentType === "music"
+                            ? "video"
+                            : "image");
                     }
                 }
                 catch (error) {
@@ -264,7 +272,7 @@ class MediaService {
             if (!mongoose_1.Types.ObjectId.isValid(mediaIdentifier)) {
                 throw new Error("Invalid media identifier");
             }
-            const media = yield media_model_1.Media.findById(mediaIdentifier).select("contentType viewCount listenCount readCount downloadCount");
+            const media = yield media_model_1.Media.findById(mediaIdentifier).select("contentType viewCount listenCount readCount downloadCount favoriteCount shareCount");
             if (!media) {
                 throw new Error("Media not found");
             }
@@ -277,7 +285,107 @@ class MediaService {
                 result.readCount = media.readCount;
                 result.downloadCount = media.downloadCount;
             }
+            result.favoriteCount = media.favoriteCount;
+            result.shareCount = media.shareCount;
             return result;
+        });
+    }
+    recordUserAction(data) {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (!mongoose_1.Types.ObjectId.isValid(data.userIdentifier) ||
+                !mongoose_1.Types.ObjectId.isValid(data.mediaIdentifier)) {
+                throw new Error("Invalid user or media identifier");
+            }
+            const media = yield media_model_1.Media.findById(data.mediaIdentifier);
+            if (!media) {
+                throw new Error("Media not found");
+            }
+            const session = yield media_model_1.Media.startSession();
+            try {
+                const action = yield session.withTransaction(() => __awaiter(this, void 0, void 0, function* () {
+                    const existingAction = yield mediaUserAction_model_1.MediaUserAction.findOne({
+                        user: new mongoose_1.Types.ObjectId(data.userIdentifier),
+                        media: new mongoose_1.Types.ObjectId(data.mediaIdentifier),
+                        actionType: data.actionType,
+                    }).session(session);
+                    if (existingAction) {
+                        throw new Error(`User has already ${data.actionType}d this media`);
+                    }
+                    const action = yield mediaUserAction_model_1.MediaUserAction.create([
+                        {
+                            user: new mongoose_1.Types.ObjectId(data.userIdentifier),
+                            media: new mongoose_1.Types.ObjectId(data.mediaIdentifier),
+                            actionType: data.actionType,
+                        },
+                    ], { session });
+                    const updateField = {};
+                    if (data.actionType === "favorite")
+                        updateField.favoriteCount = 1;
+                    if (data.actionType === "share")
+                        updateField.shareCount = 1;
+                    yield media_model_1.Media.findByIdAndUpdate(data.mediaIdentifier, { $inc: updateField }, { session });
+                    return action[0];
+                }));
+                return action;
+            }
+            finally {
+                session.endSession();
+            }
+        });
+    }
+    addToViewedMedia(userIdentifier, mediaIdentifier) {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (!mongoose_1.Types.ObjectId.isValid(userIdentifier) ||
+                !mongoose_1.Types.ObjectId.isValid(mediaIdentifier)) {
+                throw new Error("Invalid user or media identifier");
+            }
+            const media = yield media_model_1.Media.findById(mediaIdentifier);
+            if (!media) {
+                throw new Error("Media not found");
+            }
+            const session = yield userViewedMedia_model_1.UserViewedMedia.startSession();
+            try {
+                const result = yield session.withTransaction(() => __awaiter(this, void 0, void 0, function* () {
+                    const update = yield userViewedMedia_model_1.UserViewedMedia.findOneAndUpdate({ user: new mongoose_1.Types.ObjectId(userIdentifier) }, {
+                        $push: {
+                            viewedMedia: {
+                                $each: [
+                                    {
+                                        media: new mongoose_1.Types.ObjectId(mediaIdentifier),
+                                        viewedAt: new Date(),
+                                    },
+                                ],
+                                $slice: -50, // Keep only the last 50 items
+                            },
+                        },
+                    }, {
+                        upsert: true,
+                        new: true,
+                        session,
+                    });
+                    return update;
+                }));
+                return result;
+            }
+            finally {
+                session.endSession();
+            }
+        });
+    }
+    getViewedMedia(userIdentifier) {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (!mongoose_1.Types.ObjectId.isValid(userIdentifier)) {
+                throw new Error("Invalid user identifier");
+            }
+            const viewedMedia = yield userViewedMedia_model_1.UserViewedMedia.findOne({
+                user: new mongoose_1.Types.ObjectId(userIdentifier),
+            })
+                .populate({
+                path: "viewedMedia.media",
+                select: "title contentType category createdAt",
+            })
+                .lean();
+            return viewedMedia ? viewedMedia.viewedMedia : [];
         });
     }
     getMediaCountByContentType() {
@@ -311,7 +419,7 @@ class MediaService {
     }
     getTotalInteractionCounts() {
         return __awaiter(this, void 0, void 0, function* () {
-            var _a, _b, _c, _d;
+            var _a, _b, _c, _d, _e, _f;
             const result = yield media_model_1.Media.aggregate([
                 {
                     $group: {
@@ -320,6 +428,8 @@ class MediaService {
                         totalListens: { $sum: "$listenCount" },
                         totalReads: { $sum: "$readCount" },
                         totalDownloads: { $sum: "$downloadCount" },
+                        totalFavorites: { $sum: "$favoriteCount" }, // New
+                        totalShares: { $sum: "$shareCount" }, // New
                     },
                 },
             ]);
@@ -328,6 +438,8 @@ class MediaService {
                 totalListens: ((_b = result[0]) === null || _b === void 0 ? void 0 : _b.totalListens) || 0,
                 totalReads: ((_c = result[0]) === null || _c === void 0 ? void 0 : _c.totalReads) || 0,
                 totalDownloads: ((_d = result[0]) === null || _d === void 0 ? void 0 : _d.totalDownloads) || 0,
+                totalFavorites: ((_e = result[0]) === null || _e === void 0 ? void 0 : _e.totalFavorites) || 0,
+                totalShares: ((_f = result[0]) === null || _f === void 0 ? void 0 : _f.totalShares) || 0,
             };
         });
     }

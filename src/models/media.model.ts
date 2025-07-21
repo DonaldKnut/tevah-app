@@ -27,6 +27,8 @@ export interface IMedia extends Document {
   listenCount: number;
   readCount: number;
   downloadCount: number;
+  favoriteCount: number; // New field
+  shareCount: number; // New field
   isLive?: boolean;
   liveStreamStatus?: LiveStreamStatus;
   streamKey?: string;
@@ -121,6 +123,8 @@ const mediaSchema = new Schema<IMedia>(
       type: Number,
       default: 0,
     },
+    favoriteCount: { type: Number, default: 0 },
+    shareCount: { type: Number, default: 0 },
     isLive: {
       type: Boolean,
       default: false,

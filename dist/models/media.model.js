@@ -113,6 +113,8 @@ const mediaSchema = new mongoose_1.Schema({
         type: Number,
         default: 0,
     },
+    favoriteCount: { type: Number, default: 0 },
+    shareCount: { type: Number, default: 0 },
     isLive: {
         type: Boolean,
         default: false,

@@ -5,7 +5,6 @@ import { Bookmark } from "../models/bookmark.model";
 import { Types } from "mongoose";
 import Mux from "@mux/mux-node";
 import { Media } from "../models/media.model";
-// import { v2 as cloudinary } from "cloudinary";
 
 const mux = new Mux({
   tokenId: process.env.MUX_TOKEN_ID!,
@@ -23,6 +22,10 @@ interface UploadMediaRequestBody {
 
 interface InteractionRequestBody {
   interactionType: "view" | "listen" | "read" | "download";
+}
+
+interface UserActionRequestBody {
+  actionType: "favorite" | "share";
 }
 
 interface SearchQueryParameters {
@@ -146,7 +149,6 @@ export const uploadMedia = async (
       size: file?.size,
     });
 
-    // Validate required fields
     if (!title || !contentType) {
       response.status(400).json({
         success: false,
@@ -155,7 +157,6 @@ export const uploadMedia = async (
       return;
     }
 
-    // Validate contentType
     if (!["music", "videos", "books"].includes(contentType)) {
       response.status(400).json({
         success: false,
@@ -164,7 +165,6 @@ export const uploadMedia = async (
       return;
     }
 
-    // Validate file presence
     if (!file || !file.buffer) {
       response.status(400).json({
         success: false,
@@ -173,7 +173,6 @@ export const uploadMedia = async (
       return;
     }
 
-    // Validate user authentication
     if (!request.userId) {
       response.status(401).json({
         success: false,
@@ -182,7 +181,6 @@ export const uploadMedia = async (
       return;
     }
 
-    // Parse topics (handle both array and JSON string)
     let parsedTopics: string[] = [];
     if (topics) {
       try {
@@ -199,7 +197,6 @@ export const uploadMedia = async (
       }
     }
 
-    // Validate duration if provided
     if (duration !== undefined && (isNaN(duration) || duration < 0)) {
       response.status(400).json({
         success: false,
@@ -208,7 +205,6 @@ export const uploadMedia = async (
       return;
     }
 
-    // Upload media and save to database
     const media = await mediaService.uploadMedia({
       title,
       description,
@@ -226,7 +222,7 @@ export const uploadMedia = async (
       message: "Media uploaded successfully",
       media: {
         ...media.toObject(),
-        fileUrl: media.fileUrl, // Ensure Cloudinary URL is returned
+        fileUrl: media.fileUrl,
       },
     });
   } catch (error: any) {
@@ -357,6 +353,36 @@ export const getMediaByIdentifier = async (
   }
 };
 
+export const getMediaStats = async (
+  request: Request,
+  response: Response
+): Promise<void> => {
+  try {
+    const { id } = request.params;
+    if (!Types.ObjectId.isValid(id)) {
+      response.status(400).json({
+        success: false,
+        message: "Invalid media identifier",
+      });
+      return;
+    }
+
+    const stats = await mediaService.getInteractionCounts(id);
+
+    response.status(200).json({
+      success: true,
+      message: "Media stats retrieved successfully",
+      stats,
+    });
+  } catch (error: any) {
+    console.error("Get media stats error:", error);
+    response.status(error.message === "Media not found" ? 404 : 400).json({
+      success: false,
+      message: error.message || "Failed to fetch media stats",
+    });
+  }
+};
+
 export const deleteMedia = async (
   request: Request,
   response: Response
@@ -450,7 +476,7 @@ export const bookmarkMedia = async (
     if (existingBookmark) {
       response.status(400).json({
         success: false,
-        message: "Media already bookmarked",
+        message: "Media already saved",
       });
       return;
     }
@@ -462,7 +488,7 @@ export const bookmarkMedia = async (
 
     response.status(200).json({
       success: true,
-      message: `Bookmarked media ${id}`,
+      message: `Saved media ${id}`,
       bookmark,
     });
   } catch (error: any) {
@@ -470,13 +496,13 @@ export const bookmarkMedia = async (
     if (error.code === 11000) {
       response.status(400).json({
         success: false,
-        message: "Media already bookmarked",
+        message: "Media already saved",
       });
       return;
     }
     response.status(500).json({
       success: false,
-      message: "Failed to bookmark media",
+      message: "Failed to save media",
     });
   }
 };
@@ -520,6 +546,11 @@ export const recordMediaInteraction = async (
       interactionType,
     });
 
+    // If interaction is a view, add to viewed media list
+    if (interactionType === "view") {
+      await mediaService.addToViewedMedia(userIdentifier, id);
+    }
+
     response.status(201).json({
       success: true,
       message: `Recorded ${interactionType} for media ${id}`,
@@ -541,6 +572,143 @@ export const recordMediaInteraction = async (
     response.status(500).json({
       success: false,
       message: "Failed to record interaction",
+    });
+  }
+};
+
+export const recordUserAction = async (
+  request: Request,
+  response: Response
+): Promise<void> => {
+  try {
+    const { id } = request.params;
+    const { actionType } = request.body as UserActionRequestBody;
+    const userIdentifier = request.userId;
+
+    if (!userIdentifier) {
+      response.status(401).json({
+        success: false,
+        message: "Unauthorized: User not authenticated",
+      });
+      return;
+    }
+
+    if (!Types.ObjectId.isValid(id)) {
+      response.status(400).json({
+        success: false,
+        message: "Invalid media identifier",
+      });
+      return;
+    }
+
+    if (!["favorite", "share"].includes(actionType)) {
+      response.status(400).json({
+        success: false,
+        message: "Invalid action type",
+      });
+      return;
+    }
+
+    const action = await mediaService.recordUserAction({
+      userIdentifier,
+      mediaIdentifier: id,
+      actionType,
+    });
+
+    response.status(201).json({
+      success: true,
+      message: `Recorded ${actionType} for media ${id}`,
+      action,
+    });
+  } catch (error: unknown) {
+    console.error("Record user action error:", error);
+    const safeActionType = request.body?.actionType || "unknown action";
+    if (
+      error instanceof Error &&
+      (error.message.includes("Invalid") ||
+        error.message.includes("already") ||
+        error.message.includes("Media not found"))
+    ) {
+      response.status(error.message === "Media not found" ? 404 : 400).json({
+        success: false,
+        message: error.message,
+      });
+      return;
+    }
+    response.status(500).json({
+      success: false,
+      message: `Failed to record ${safeActionType}`,
+    });
+  }
+};
+
+export const addToViewedMedia = async (
+  request: Request,
+  response: Response
+): Promise<void> => {
+  try {
+    const { mediaId } = request.body;
+    const userIdentifier = request.userId;
+
+    if (!userIdentifier) {
+      response.status(401).json({
+        success: false,
+        message: "Unauthorized: User not authenticated",
+      });
+      return;
+    }
+
+    if (!Types.ObjectId.isValid(mediaId)) {
+      response.status(400).json({
+        success: false,
+        message: "Invalid media identifier",
+      });
+      return;
+    }
+
+    const result = await mediaService.addToViewedMedia(userIdentifier, mediaId);
+
+    response.status(201).json({
+      success: true,
+      message: "Added media to viewed list",
+      viewedMedia: result.viewedMedia,
+    });
+  } catch (error: any) {
+    console.error("Add to viewed media error:", error);
+    response.status(error.message === "Media not found" ? 404 : 400).json({
+      success: false,
+      message: error.message || "Failed to add to viewed media",
+    });
+  }
+};
+
+export const getViewedMedia = async (
+  request: Request,
+  response: Response
+): Promise<void> => {
+  try {
+    const userIdentifier = request.userId;
+
+    if (!userIdentifier) {
+      response.status(401).json({
+        success: false,
+        message: "Unauthorized: User not authenticated",
+      });
+      return;
+    }
+
+    const viewedMedia = await mediaService.getViewedMedia(userIdentifier);
+
+    response.status(200).json({
+      success: true,
+      message: "Retrieved viewed media list",
+      viewedMedia,
+    });
+  } catch (error: any) {
+    console.error("Get viewed media error:", error);
+    response.status(500).json({
+      success: false,
+      message: "Failed to retrieve viewed media",
     });
   }
 };

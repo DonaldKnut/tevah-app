@@ -2,6 +2,8 @@ import { Media } from "../models/media.model";
 import { MediaInteraction } from "../models/mediaInteraction.model";
 import { Bookmark } from "../models/bookmark.model";
 import { User } from "../models/user.model";
+import { UserViewedMedia } from "../models/userViewedMedia.model"; // New import
+import { MediaUserAction } from "../models/mediaUserAction.model"; // New import
 import { Types, ClientSession } from "mongoose";
 import fileUploadService from "./fileUpload.service";
 
@@ -28,18 +30,39 @@ interface MediaInteractionInput {
   interactionType: "view" | "listen" | "read" | "download";
 }
 
+interface MediaUserActionInput {
+  userIdentifier: string;
+  mediaIdentifier: string;
+  actionType: "favorite" | "share";
+}
+
+interface PopulatedMedia {
+  _id: Types.ObjectId;
+  title: string;
+  contentType: "music" | "videos" | "books";
+  category?: string;
+  createdAt: Date;
+}
+
+// Interface for the UserViewedMedia document after .lean()
+interface LeanUserViewedMedia {
+  _id: Types.ObjectId;
+  user: Types.ObjectId;
+  viewedMedia: { media: PopulatedMedia; viewedAt: Date }[];
+  __v: number;
+}
+
 type DurationRangeKey = "short" | "medium" | "long";
 
 export class MediaService {
   async uploadMedia(data: MediaInput) {
     const validMimeTypes: { [key in MediaInput["contentType"]]: string[] } = {
-      videos: ["video/mp4", "video/webm", "video/ogg"], // Added closing bracket
+      videos: ["video/mp4", "video/webm", "video/ogg"],
       music: ["audio/mpeg", "audio/mp3", "audio/wav", "audio/ogg"],
       books: ["application/pdf", "application/epub+zip"],
       live: [],
     };
 
-    // Validate MIME type for non-live content
     if (data.contentType !== "live" && data.file && data.fileMimeType) {
       if (!validMimeTypes[data.contentType].includes(data.fileMimeType)) {
         throw new Error(
@@ -86,6 +109,12 @@ export class MediaService {
       streamKey: data.streamKey,
       rtmpUrl: data.rtmpUrl,
       playbackUrl: data.playbackUrl,
+      viewCount: 0,
+      listenCount: 0,
+      readCount: 0,
+      downloadCount: 0,
+      favoriteCount: 0, // Initialize new field
+      shareCount: 0, // Initialize new field
     });
 
     await media.save();
@@ -228,7 +257,6 @@ export class MediaService {
       throw new Error("Unauthorized to delete this media");
     }
 
-    // Delete media file from storage if it exists
     if (media.fileUrl) {
       try {
         const publicId = media.fileUrl.split("/").pop()?.split(".")[0];
@@ -326,7 +354,7 @@ export class MediaService {
     }
 
     const media = await Media.findById(mediaIdentifier).select(
-      "contentType viewCount listenCount readCount downloadCount"
+      "contentType viewCount listenCount readCount downloadCount favoriteCount shareCount"
     );
     if (!media) {
       throw new Error("Media not found");
@@ -337,6 +365,8 @@ export class MediaService {
       listenCount?: number;
       readCount?: number;
       downloadCount?: number;
+      favoriteCount?: number;
+      shareCount?: number;
     } = {};
 
     if (media.contentType === "videos") result.viewCount = media.viewCount;
@@ -345,8 +375,132 @@ export class MediaService {
       result.readCount = media.readCount;
       result.downloadCount = media.downloadCount;
     }
+    result.favoriteCount = media.favoriteCount;
+    result.shareCount = media.shareCount;
 
     return result;
+  }
+
+  async recordUserAction(data: MediaUserActionInput) {
+    if (
+      !Types.ObjectId.isValid(data.userIdentifier) ||
+      !Types.ObjectId.isValid(data.mediaIdentifier)
+    ) {
+      throw new Error("Invalid user or media identifier");
+    }
+
+    const media = await Media.findById(data.mediaIdentifier);
+    if (!media) {
+      throw new Error("Media not found");
+    }
+
+    const session: ClientSession = await Media.startSession();
+    try {
+      const action = await session.withTransaction(async () => {
+        const existingAction = await MediaUserAction.findOne({
+          user: new Types.ObjectId(data.userIdentifier),
+          media: new Types.ObjectId(data.mediaIdentifier),
+          actionType: data.actionType,
+        }).session(session);
+
+        if (existingAction) {
+          throw new Error(`User has already ${data.actionType}d this media`);
+        }
+
+        const action = await MediaUserAction.create(
+          [
+            {
+              user: new Types.ObjectId(data.userIdentifier),
+              media: new Types.ObjectId(data.mediaIdentifier),
+              actionType: data.actionType,
+            },
+          ],
+          { session }
+        );
+
+        const updateField: { [key: string]: number } = {};
+        if (data.actionType === "favorite") updateField.favoriteCount = 1;
+        if (data.actionType === "share") updateField.shareCount = 1;
+
+        await Media.findByIdAndUpdate(
+          data.mediaIdentifier,
+          { $inc: updateField },
+          { session }
+        );
+
+        return action[0];
+      });
+
+      return action;
+    } finally {
+      session.endSession();
+    }
+  }
+
+  async addToViewedMedia(userIdentifier: string, mediaIdentifier: string) {
+    if (
+      !Types.ObjectId.isValid(userIdentifier) ||
+      !Types.ObjectId.isValid(mediaIdentifier)
+    ) {
+      throw new Error("Invalid user or media identifier");
+    }
+
+    const media = await Media.findById(mediaIdentifier);
+    if (!media) {
+      throw new Error("Media not found");
+    }
+
+    const session: ClientSession = await UserViewedMedia.startSession();
+    try {
+      const result = await session.withTransaction(async () => {
+        const update = await UserViewedMedia.findOneAndUpdate(
+          { user: new Types.ObjectId(userIdentifier) },
+          {
+            $push: {
+              viewedMedia: {
+                $each: [
+                  {
+                    media: new Types.ObjectId(mediaIdentifier),
+                    viewedAt: new Date(),
+                  },
+                ],
+                $slice: -50, // Keep only the last 50 items
+              },
+            },
+          },
+          {
+            upsert: true,
+            new: true,
+            session,
+          }
+        );
+
+        return update;
+      });
+
+      return result;
+    } finally {
+      session.endSession();
+    }
+  }
+
+  async getViewedMedia(
+    userIdentifier: string
+  ): Promise<{ media: Partial<PopulatedMedia>; viewedAt: Date }[]> {
+    if (!Types.ObjectId.isValid(userIdentifier)) {
+      throw new Error("Invalid user identifier");
+    }
+
+    const viewedMedia = await UserViewedMedia.findOne({
+      user: new Types.ObjectId(userIdentifier),
+    })
+      .populate<{ viewedMedia: { media: PopulatedMedia; viewedAt: Date }[] }>({
+        path: "viewedMedia.media",
+        select: "title contentType category createdAt",
+      })
+      .lean<LeanUserViewedMedia>();
+
+    return viewedMedia ? viewedMedia.viewedMedia : [];
   }
 
   async getMediaCountByContentType() {
@@ -394,6 +548,8 @@ export class MediaService {
           totalListens: { $sum: "$listenCount" },
           totalReads: { $sum: "$readCount" },
           totalDownloads: { $sum: "$downloadCount" },
+          totalFavorites: { $sum: "$favoriteCount" }, // New
+          totalShares: { $sum: "$shareCount" }, // New
         },
       },
     ]);
@@ -403,6 +559,8 @@ export class MediaService {
       totalListens: result[0]?.totalListens || 0,
       totalReads: result[0]?.totalReads || 0,
       totalDownloads: result[0]?.totalDownloads || 0,
+      totalFavorites: result[0]?.totalFavorites || 0,
+      totalShares: result[0]?.totalShares || 0,
     };
   }
 

@@ -12,14 +12,13 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getLiveStreams = exports.endMuxLiveStream = exports.startMuxLiveStream = exports.recordMediaInteraction = exports.bookmarkMedia = exports.deleteMedia = exports.getMediaByIdentifier = exports.searchMedia = exports.getAllMedia = exports.uploadMedia = exports.getAnalyticsDashboard = void 0;
+exports.getLiveStreams = exports.endMuxLiveStream = exports.startMuxLiveStream = exports.getViewedMedia = exports.addToViewedMedia = exports.recordUserAction = exports.recordMediaInteraction = exports.bookmarkMedia = exports.deleteMedia = exports.getMediaStats = exports.getMediaByIdentifier = exports.searchMedia = exports.getAllMedia = exports.uploadMedia = exports.getAnalyticsDashboard = void 0;
 const fileUpload_service_1 = __importDefault(require("../service/fileUpload.service"));
 const media_service_1 = require("../service/media.service");
 const bookmark_model_1 = require("../models/bookmark.model");
 const mongoose_1 = require("mongoose");
 const mux_node_1 = __importDefault(require("@mux/mux-node"));
 const media_model_1 = require("../models/media.model");
-const multer_1 = __importDefault(require("multer"));
 const mux = new mux_node_1.default({
     tokenId: process.env.MUX_TOKEN_ID,
     tokenSecret: process.env.MUX_TOKEN_SECRET,
@@ -99,11 +98,18 @@ const uploadMedia = (request, response) => __awaiter(void 0, void 0, void 0, fun
             mimetype: file === null || file === void 0 ? void 0 : file.mimetype,
             originalname: file === null || file === void 0 ? void 0 : file.originalname,
             size: file === null || file === void 0 ? void 0 : file.size,
-        }); // Debug log
+        });
+        if (!title || !contentType) {
+            response.status(400).json({
+                success: false,
+                message: "Title and contentType are required",
+            });
+            return;
+        }
         if (!["music", "videos", "books"].includes(contentType)) {
             response.status(400).json({
                 success: false,
-                message: "Invalid content type. Must be music, videos, or books",
+                message: "Invalid content type. Must be 'music', 'videos', or 'books'",
             });
             return;
         }
@@ -121,15 +127,26 @@ const uploadMedia = (request, response) => __awaiter(void 0, void 0, void 0, fun
             });
             return;
         }
-        const allowedMimeTypes = {
-            music: ["audio/mpeg", "audio/mp3", "audio/wav"],
-            videos: ["video/mp4", "video/mpeg"],
-            books: ["application/pdf"],
-        };
-        if (!allowedMimeTypes[contentType].includes(file.mimetype)) {
+        let parsedTopics = [];
+        if (topics) {
+            try {
+                parsedTopics = Array.isArray(topics) ? topics : JSON.parse(topics);
+                if (!Array.isArray(parsedTopics)) {
+                    throw new Error("Topics must be an array");
+                }
+            }
+            catch (error) {
+                response.status(400).json({
+                    success: false,
+                    message: "Invalid topics format. Must be an array of strings",
+                });
+                return;
+            }
+        }
+        if (duration !== undefined && (isNaN(duration) || duration < 0)) {
             response.status(400).json({
                 success: false,
-                message: `Invalid file type for ${contentType}: ${file.mimetype}`,
+                message: "Invalid duration. Must be a non-negative number",
             });
             return;
         }
@@ -138,28 +155,20 @@ const uploadMedia = (request, response) => __awaiter(void 0, void 0, void 0, fun
             description,
             contentType,
             category,
-            file: file.buffer, // Pass the file buffer
-            fileMimeType: file.mimetype, // Pass the MIME type
+            file: file.buffer,
+            fileMimeType: file.mimetype,
             uploadedBy: new mongoose_1.Types.ObjectId(request.userId),
-            topics: topics ? JSON.parse(topics) : [],
+            topics: parsedTopics,
             duration,
         });
         response.status(201).json({
             success: true,
             message: "Media uploaded successfully",
-            media,
+            media: Object.assign(Object.assign({}, media.toObject()), { fileUrl: media.fileUrl }),
         });
     }
     catch (error) {
         console.error("Upload media error:", error);
-        if (error instanceof multer_1.default.MulterError &&
-            error.code === "LIMIT_UNEXPECTED_FILE") {
-            response.status(400).json({
-                success: false,
-                message: `Unexpected field in file upload. Expected field name: 'file'`,
-            });
-            return;
-        }
         response.status(500).json({
             success: false,
             message: `Failed to upload media: ${error.message}`,
@@ -269,6 +278,32 @@ const getMediaByIdentifier = (request, response) => __awaiter(void 0, void 0, vo
     }
 });
 exports.getMediaByIdentifier = getMediaByIdentifier;
+const getMediaStats = (request, response) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const { id } = request.params;
+        if (!mongoose_1.Types.ObjectId.isValid(id)) {
+            response.status(400).json({
+                success: false,
+                message: "Invalid media identifier",
+            });
+            return;
+        }
+        const stats = yield media_service_1.mediaService.getInteractionCounts(id);
+        response.status(200).json({
+            success: true,
+            message: "Media stats retrieved successfully",
+            stats,
+        });
+    }
+    catch (error) {
+        console.error("Get media stats error:", error);
+        response.status(error.message === "Media not found" ? 404 : 400).json({
+            success: false,
+            message: error.message || "Failed to fetch media stats",
+        });
+    }
+});
+exports.getMediaStats = getMediaStats;
 const deleteMedia = (request, response) => __awaiter(void 0, void 0, void 0, function* () {
     var _a;
     try {
@@ -347,7 +382,7 @@ const bookmarkMedia = (request, response) => __awaiter(void 0, void 0, void 0, f
         if (existingBookmark) {
             response.status(400).json({
                 success: false,
-                message: "Media already bookmarked",
+                message: "Media already saved",
             });
             return;
         }
@@ -357,7 +392,7 @@ const bookmarkMedia = (request, response) => __awaiter(void 0, void 0, void 0, f
         });
         response.status(200).json({
             success: true,
-            message: `Bookmarked media ${id}`,
+            message: `Saved media ${id}`,
             bookmark,
         });
     }
@@ -366,13 +401,13 @@ const bookmarkMedia = (request, response) => __awaiter(void 0, void 0, void 0, f
         if (error.code === 11000) {
             response.status(400).json({
                 success: false,
-                message: "Media already bookmarked",
+                message: "Media already saved",
             });
             return;
         }
         response.status(500).json({
             success: false,
-            message: "Failed to bookmark media",
+            message: "Failed to save media",
         });
     }
 });
@@ -408,6 +443,10 @@ const recordMediaInteraction = (request, response) => __awaiter(void 0, void 0, 
             mediaIdentifier: id,
             interactionType,
         });
+        // If interaction is a view, add to viewed media list
+        if (interactionType === "view") {
+            yield media_service_1.mediaService.addToViewedMedia(userIdentifier, id);
+        }
         response.status(201).json({
             success: true,
             message: `Recorded ${interactionType} for media ${id}`,
@@ -432,6 +471,124 @@ const recordMediaInteraction = (request, response) => __awaiter(void 0, void 0, 
     }
 });
 exports.recordMediaInteraction = recordMediaInteraction;
+const recordUserAction = (request, response) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a;
+    try {
+        const { id } = request.params;
+        const { actionType } = request.body;
+        const userIdentifier = request.userId;
+        if (!userIdentifier) {
+            response.status(401).json({
+                success: false,
+                message: "Unauthorized: User not authenticated",
+            });
+            return;
+        }
+        if (!mongoose_1.Types.ObjectId.isValid(id)) {
+            response.status(400).json({
+                success: false,
+                message: "Invalid media identifier",
+            });
+            return;
+        }
+        if (!["favorite", "share"].includes(actionType)) {
+            response.status(400).json({
+                success: false,
+                message: "Invalid action type",
+            });
+            return;
+        }
+        const action = yield media_service_1.mediaService.recordUserAction({
+            userIdentifier,
+            mediaIdentifier: id,
+            actionType,
+        });
+        response.status(201).json({
+            success: true,
+            message: `Recorded ${actionType} for media ${id}`,
+            action,
+        });
+    }
+    catch (error) {
+        console.error("Record user action error:", error);
+        const safeActionType = ((_a = request.body) === null || _a === void 0 ? void 0 : _a.actionType) || "unknown action";
+        if (error instanceof Error &&
+            (error.message.includes("Invalid") ||
+                error.message.includes("already") ||
+                error.message.includes("Media not found"))) {
+            response.status(error.message === "Media not found" ? 404 : 400).json({
+                success: false,
+                message: error.message,
+            });
+            return;
+        }
+        response.status(500).json({
+            success: false,
+            message: `Failed to record ${safeActionType}`,
+        });
+    }
+});
+exports.recordUserAction = recordUserAction;
+const addToViewedMedia = (request, response) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const { mediaId } = request.body;
+        const userIdentifier = request.userId;
+        if (!userIdentifier) {
+            response.status(401).json({
+                success: false,
+                message: "Unauthorized: User not authenticated",
+            });
+            return;
+        }
+        if (!mongoose_1.Types.ObjectId.isValid(mediaId)) {
+            response.status(400).json({
+                success: false,
+                message: "Invalid media identifier",
+            });
+            return;
+        }
+        const result = yield media_service_1.mediaService.addToViewedMedia(userIdentifier, mediaId);
+        response.status(201).json({
+            success: true,
+            message: "Added media to viewed list",
+            viewedMedia: result.viewedMedia,
+        });
+    }
+    catch (error) {
+        console.error("Add to viewed media error:", error);
+        response.status(error.message === "Media not found" ? 404 : 400).json({
+            success: false,
+            message: error.message || "Failed to add to viewed media",
+        });
+    }
+});
+exports.addToViewedMedia = addToViewedMedia;
+const getViewedMedia = (request, response) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const userIdentifier = request.userId;
+        if (!userIdentifier) {
+            response.status(401).json({
+                success: false,
+                message: "Unauthorized: User not authenticated",
+            });
+            return;
+        }
+        const viewedMedia = yield media_service_1.mediaService.getViewedMedia(userIdentifier);
+        response.status(200).json({
+            success: true,
+            message: "Retrieved viewed media list",
+            viewedMedia,
+        });
+    }
+    catch (error) {
+        console.error("Get viewed media error:", error);
+        response.status(500).json({
+            success: false,
+            message: "Failed to retrieve viewed media",
+        });
+    }
+});
+exports.getViewedMedia = getViewedMedia;
 const startMuxLiveStream = (request, response) => __awaiter(void 0, void 0, void 0, function* () {
     var _a, _b, _c, _d;
     try {
