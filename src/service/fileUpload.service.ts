@@ -75,5 +75,26 @@ class FileUploadService {
       stream.pipe(uploadStream);
     });
   }
+
+  async deleteMedia(
+    publicId: string,
+    resourceType: "image" | "video" | "raw" = "raw"
+  ): Promise<void> {
+    try {
+      console.log("Deleting from Cloudinary:", { publicId, resourceType });
+      const result = await cloudinary.uploader.destroy(publicId, {
+        resource_type: resourceType,
+      });
+      if (result.result !== "ok") {
+        console.error("Cloudinary deletion failed:", result);
+        throw new Error(`Media deletion failed: ${result.result}`);
+      }
+      console.log("Cloudinary deletion success:", result);
+    } catch (error) {
+      console.error("Cloudinary deletion error:", error);
+      throw new Error("Failed to delete media from Cloudinary");
+    }
+  }
 }
+
 export default new FileUploadService();
