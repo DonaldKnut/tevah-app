@@ -11,8 +11,7 @@ interface MediaInput {
   contentType: "music" | "videos" | "books" | "live";
   category?: string;
   uploadedBy: Types.ObjectId | string;
-  file?: Buffer; // Changed from fileUrl to file buffer for direct upload
-  fileUrl?: string; // Added fileUrl to match Media model
+  file?: Buffer;
   fileMimeType?: string;
   topics?: string[];
   duration?: number;
@@ -29,24 +28,26 @@ interface MediaInteractionInput {
   interactionType: "view" | "listen" | "read" | "download";
 }
 
-// Define valid duration range keys to fix TypeScript error
 type DurationRangeKey = "short" | "medium" | "long";
 
 export class MediaService {
   async uploadMedia(data: MediaInput) {
     const validMimeTypes: { [key in MediaInput["contentType"]]: string[] } = {
-      videos: ["video/mp4", "video/webm", "video/ogg", "video/mpeg"],
-      music: ["audio/mpeg", "audio/wav", "audio/ogg", "audio/mp3"],
+      videos: ["video/mp4", "video/webm", "video/ogg"], // Added closing bracket
+      music: ["audio/mpeg", "audio/mp3", "audio/wav", "audio/ogg"],
       books: ["application/pdf", "application/epub+zip"],
       live: [],
     };
 
-    if (data.file && data.fileMimeType) {
+    // Validate MIME type for non-live content
+    if (data.contentType !== "live" && data.file && data.fileMimeType) {
       if (!validMimeTypes[data.contentType].includes(data.fileMimeType)) {
         throw new Error(
           `Invalid MIME type ${data.fileMimeType} for content type ${data.contentType}`
         );
       }
+    } else if (data.contentType !== "live" && !data.file) {
+      throw new Error("File is required for non-live content types");
     }
 
     let fileUrl: string | undefined;
@@ -65,8 +66,6 @@ export class MediaService {
         console.error(`Error uploading ${data.contentType}:`, error);
         throw new Error(`Failed to upload ${data.contentType}`);
       }
-    } else if (data.contentType !== "live") {
-      throw new Error("File is required for non-live content types");
     }
 
     const media = new Media({
@@ -135,7 +134,6 @@ export class MediaService {
       }
     }
 
-    // Fix TypeScript error by explicitly typing durationRanges
     const durationRanges: Record<
       DurationRangeKey,
       { $lte?: number; $gte?: number; $gt?: number }
@@ -236,8 +234,10 @@ export class MediaService {
         const publicId = media.fileUrl.split("/").pop()?.split(".")[0];
         if (publicId) {
           await fileUploadService.deleteMedia(
-            `media-${media.contentType}/${publicId}`,
-            media.contentType
+            `media/${media.contentType}/${publicId}`,
+            media.contentType === "videos" || media.contentType === "music"
+              ? "video"
+              : "image"
           );
         }
       } catch (error) {

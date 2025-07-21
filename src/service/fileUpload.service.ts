@@ -16,14 +16,25 @@ class FileUploadService {
     return new Promise((resolve, reject) => {
       const isVideoOrAudio =
         mimetype.startsWith("video") || mimetype.startsWith("audio");
+      const isPdf = mimetype === "application/pdf";
 
+      console.log("Uploading to Cloudinary:", {
+        folderPath,
+        mimetype,
+        resource_type: isVideoOrAudio ? "video" : isPdf ? "raw" : "auto",
+      });
+
+      const publicId = `${folderPath}/${Date.now()}`; // Unique public ID
       const uploadStream = cloudinary.uploader.upload_stream(
         {
           folder: folderPath,
-          resource_type: isVideoOrAudio ? "video" : "auto", // ✅ audio treated as video
+          resource_type: isVideoOrAudio ? "video" : isPdf ? "raw" : "auto",
+          public_id: publicId,
+          access_control: [{ access_type: "anonymous" }],
         },
         (error, uploadResult?: UploadApiResponse) => {
           if (error) {
+            console.error("Cloudinary upload error:", error);
             return reject(
               new Error(
                 `${
@@ -33,10 +44,27 @@ class FileUploadService {
             );
           }
           if (!uploadResult) {
+            console.error("Cloudinary upload failed: No response received");
             return reject(
               new Error("Upload failed: No response from Cloudinary")
             );
           }
+
+          // Generate signed URL
+          const signedUrl = cloudinary.url(uploadResult.public_id, {
+            secure: true,
+            resource_type: isVideoOrAudio ? "video" : isPdf ? "raw" : "image",
+            sign_url: true,
+            version: uploadResult.version,
+          });
+
+          console.log("Cloudinary upload success:", {
+            secure_url: uploadResult.secure_url,
+            public_id: uploadResult.public_id,
+            signed_url: signedUrl,
+          });
+
+          uploadResult.secure_url = signedUrl; // Replace with signed URL
           resolve(uploadResult);
         }
       );
@@ -47,23 +75,5 @@ class FileUploadService {
       stream.pipe(uploadStream);
     });
   }
-
-  async deleteMedia(
-    publicId: string,
-    resourceType: "image" | "video" = "video"
-  ): Promise<void> {
-    try {
-      const result = await cloudinary.uploader.destroy(publicId, {
-        resource_type: resourceType,
-      });
-      if (result.result !== "ok") {
-        throw new Error(`Media deletion failed: ${result.result}`);
-      }
-    } catch (error) {
-      console.error("Cloudinary deletion error:", error);
-      throw new Error("Failed to delete media from Cloudinary");
-    }
-  }
 }
-
 export default new FileUploadService();

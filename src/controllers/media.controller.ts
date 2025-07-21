@@ -5,8 +5,7 @@ import { Bookmark } from "../models/bookmark.model";
 import { Types } from "mongoose";
 import Mux from "@mux/mux-node";
 import { Media } from "../models/media.model";
-import { v2 as cloudinary } from "cloudinary";
-import multer from "multer";
+// import { v2 as cloudinary } from "cloudinary";
 
 const mux = new Mux({
   tokenId: process.env.MUX_TOKEN_ID!,
@@ -18,7 +17,7 @@ interface UploadMediaRequestBody {
   description?: string;
   contentType: "music" | "videos" | "books";
   category?: string;
-  topics?: string;
+  topics?: string[] | string;
   duration?: number;
 }
 
@@ -145,16 +144,27 @@ export const uploadMedia = async (
       mimetype: file?.mimetype,
       originalname: file?.originalname,
       size: file?.size,
-    }); // Debug log
+    });
 
-    if (!["music", "videos", "books"].includes(contentType)) {
+    // Validate required fields
+    if (!title || !contentType) {
       response.status(400).json({
         success: false,
-        message: "Invalid content type. Must be music, videos, or books",
+        message: "Title and contentType are required",
       });
       return;
     }
 
+    // Validate contentType
+    if (!["music", "videos", "books"].includes(contentType)) {
+      response.status(400).json({
+        success: false,
+        message: "Invalid content type. Must be 'music', 'videos', or 'books'",
+      });
+      return;
+    }
+
+    // Validate file presence
     if (!file || !file.buffer) {
       response.status(400).json({
         success: false,
@@ -163,6 +173,7 @@ export const uploadMedia = async (
       return;
     }
 
+    // Validate user authentication
     if (!request.userId) {
       response.status(401).json({
         success: false,
@@ -171,48 +182,55 @@ export const uploadMedia = async (
       return;
     }
 
-    const allowedMimeTypes = {
-      music: ["audio/mpeg", "audio/mp3", "audio/wav"],
-      videos: ["video/mp4", "video/mpeg"],
-      books: ["application/pdf"],
-    };
-    if (!allowedMimeTypes[contentType].includes(file.mimetype)) {
+    // Parse topics (handle both array and JSON string)
+    let parsedTopics: string[] = [];
+    if (topics) {
+      try {
+        parsedTopics = Array.isArray(topics) ? topics : JSON.parse(topics);
+        if (!Array.isArray(parsedTopics)) {
+          throw new Error("Topics must be an array");
+        }
+      } catch (error) {
+        response.status(400).json({
+          success: false,
+          message: "Invalid topics format. Must be an array of strings",
+        });
+        return;
+      }
+    }
+
+    // Validate duration if provided
+    if (duration !== undefined && (isNaN(duration) || duration < 0)) {
       response.status(400).json({
         success: false,
-        message: `Invalid file type for ${contentType}: ${file.mimetype}`,
+        message: "Invalid duration. Must be a non-negative number",
       });
       return;
     }
 
+    // Upload media and save to database
     const media = await mediaService.uploadMedia({
       title,
       description,
       contentType,
       category,
-      file: file.buffer, // Pass the file buffer
-      fileMimeType: file.mimetype, // Pass the MIME type
+      file: file.buffer,
+      fileMimeType: file.mimetype,
       uploadedBy: new Types.ObjectId(request.userId),
-      topics: topics ? JSON.parse(topics) : [],
+      topics: parsedTopics,
       duration,
     });
 
     response.status(201).json({
       success: true,
       message: "Media uploaded successfully",
-      media,
+      media: {
+        ...media.toObject(),
+        fileUrl: media.fileUrl, // Ensure Cloudinary URL is returned
+      },
     });
   } catch (error: any) {
     console.error("Upload media error:", error);
-    if (
-      error instanceof multer.MulterError &&
-      error.code === "LIMIT_UNEXPECTED_FILE"
-    ) {
-      response.status(400).json({
-        success: false,
-        message: `Unexpected field in file upload. Expected field name: 'file'`,
-      });
-      return;
-    }
     response.status(500).json({
       success: false,
       message: `Failed to upload media: ${error.message}`,
